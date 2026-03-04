@@ -39,12 +39,12 @@ export const useCanvasStore = create<CanvasState>()(
       addObject: (object) => {
         const id = object.id ?? uuidv4()
         const nextObject = { ...object, id }
-        set((state) => ({ objects: [...state.objects, nextObject] }))
+        set((state) => ({ objects: [...state.objects, nextObject as CanvasObject] }))
         return id
       },
       updateObject: (id, updates) =>
         set((state) => ({
-          objects: state.objects.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj)),
+          objects: state.objects.map((obj) => (obj.id === id ? { ...obj, ...updates } as CanvasObject : obj)),
         })),
       removeObject: (id) =>
         set((state) => ({
@@ -64,49 +64,44 @@ export const useCanvasStore = create<CanvasState>()(
       removeVein: (id) => set((state) => ({ veins: state.veins.filter((vein) => vein.id !== id) })),
       groupSelection: () =>
         set((state) => {
-          if (!state.selection.selectedIds.length) return state
+          if (!state.selection.selectedIds.length) return {}
           const groupId = uuidv4()
           return {
-            ...state,
             objects: state.objects.map((obj) =>
-              state.selection.selectedIds.includes(obj.id) ? { ...obj, groupId } : obj,
+              state.selection.selectedIds.includes(obj.id) ? ({ ...obj, groupId } as CanvasObject) : obj,
             ),
           }
         }),
       ungroupSelection: () =>
         set((state) => ({
-          ...state,
           objects: state.objects.map((obj) =>
-            state.selection.selectedIds.includes(obj.id) ? { ...obj, groupId: undefined } : obj,
+            state.selection.selectedIds.includes(obj.id) ? ({ ...obj, groupId: undefined } as CanvasObject) : obj,
           ),
         })),
       setLockedForSelection: (locked) =>
         set((state) => ({
-          ...state,
           objects: state.objects.map((obj) =>
-            state.selection.selectedIds.includes(obj.id) ? { ...obj, locked } : obj,
+            state.selection.selectedIds.includes(obj.id) ? ({ ...obj, locked } as CanvasObject) : obj,
           ),
         })),
       bumpLayer: (direction) =>
         set((state) => {
           const delta = direction === 'up' ? 1 : -1
           return {
-            ...state,
             objects: state.objects.map((obj) =>
               state.selection.selectedIds.includes(obj.id)
-                ? { ...obj, layerIndex: Math.max(0, obj.layerIndex + delta) }
+                ? ({ ...obj, layerIndex: Math.max(0, obj.layerIndex + delta) } as CanvasObject)
                 : obj,
             ),
           }
         }),
       convertToPrototype: (id, prototypeType) =>
         set((state) => ({
-          ...state,
           objects: state.objects.map((obj) =>
             obj.id === id
-              ? {
+              ? ({
                   id: obj.id,
-                  type: 'prototype',
+                  type: 'prototype' as const,
                   position: obj.position,
                   size: obj.size,
                   rotation: obj.rotation,
@@ -115,7 +110,7 @@ export const useCanvasStore = create<CanvasState>()(
                   locked: obj.locked,
                   prototypeType,
                   params: {},
-                }
+                } as CanvasObject)
               : obj,
           ),
         })),

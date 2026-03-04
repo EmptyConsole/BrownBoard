@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { useCanvasStore } from '../store/canvasStore'
 import { GRID_UNIT, snapToGrid } from '../utils/grid'
+import type { CanvasObject } from '../types/canvas'
 
 export const runLayoutAssistant = () => {
   const state = useCanvasStore.getState()
@@ -32,7 +33,7 @@ export const runLayoutAssistant = () => {
 
   if (overlaps.length) {
     overlaps.forEach((overlap) => {
-      state.addObject({
+      const obj: CanvasObject = {
         id: uuidv4(),
         type: 'ai-suggestion',
         position: { x: snapToGrid(overlap.area.x - GRID_UNIT), y: snapToGrid(overlap.area.y - GRID_UNIT) },
@@ -45,7 +46,8 @@ export const runLayoutAssistant = () => {
         metadata: { semantic: 'ui' },
         suggestion: 'Objects overlap — tidy spacing?',
         targetIds: overlap.targetIds,
-      })
+      }
+      state.addObject(obj)
     })
   } else if (objs.length > 8) {
     const center = objs.reduce(
@@ -56,7 +58,7 @@ export const runLayoutAssistant = () => {
       { x: 0, y: 0 },
     )
     const avg = { x: center.x / objs.length, y: center.y / objs.length }
-    state.addObject({
+    const obj: CanvasObject = {
       id: uuidv4(),
       type: 'ai-suggestion',
       position: { x: snapToGrid(avg.x - 120), y: snapToGrid(avg.y - 60) },
@@ -66,6 +68,7 @@ export const runLayoutAssistant = () => {
       metadata: { semantic: 'ui' },
       suggestion: 'Consider grouping related elements or adding a frame.',
       targetIds: objs.map((o) => o.id),
-    })
+    }
+    state.addObject(obj)
   }
 }

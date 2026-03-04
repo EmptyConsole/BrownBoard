@@ -6,33 +6,18 @@ import type { ActionVein, VeinAction, VeinTrigger } from '../types/veins'
 const semanticOptions = ['note', 'ui', 'logic', 'task'] as const
 
 export function PropertiesPanel() {
-  const {
-    selected,
-    selectionCount,
-    veins,
-    objects,
-    updateObject,
-    groupSelection,
-    ungroupSelection,
-    setLockedForSelection,
-    bumpLayer,
-    convertToPrototype,
-    addVein,
-    removeVein,
-  } = useCanvasStore((state) => ({
-    selected: state.objects.find((obj) => obj.id === state.selection.selectedIds[0]),
-    selectionCount: state.selection.selectedIds.length,
-    veins: state.veins,
-    objects: state.objects,
-    updateObject: state.updateObject,
-    groupSelection: state.groupSelection,
-    ungroupSelection: state.ungroupSelection,
-    setLockedForSelection: state.setLockedForSelection,
-    bumpLayer: state.bumpLayer,
-    convertToPrototype: state.convertToPrototype,
-    addVein: state.addVein,
-    removeVein: state.removeVein,
-  }))
+  const selected = useCanvasStore((state) => state.objects.find((obj) => obj.id === state.selection.selectedIds[0]))
+  const selectionCount = useCanvasStore((state) => state.selection.selectedIds.length)
+  const veins = useCanvasStore((state) => state.veins)
+  const objects = useCanvasStore((state) => state.objects)
+  const updateObject = useCanvasStore((state) => state.updateObject)
+  const groupSelection = useCanvasStore((state) => state.groupSelection)
+  const ungroupSelection = useCanvasStore((state) => state.ungroupSelection)
+  const setLockedForSelection = useCanvasStore((state) => state.setLockedForSelection)
+  const bumpLayer = useCanvasStore((state) => state.bumpLayer)
+  const convertToPrototype = useCanvasStore((state) => state.convertToPrototype)
+  const addVein = useCanvasStore((state) => state.addVein)
+  const removeVein = useCanvasStore((state) => state.removeVein)
 
   const selectionLabel = useMemo(() => {
     if (!selected) return 'Nothing selected'

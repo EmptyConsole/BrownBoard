@@ -10,9 +10,13 @@ import { GithubPanel } from './components/GithubPanel'
 function App() {
   useSupabaseSync()
   useEffect(() => {
-    const channel = startRealtimeSync()
-    return () => {
-      channel?.unsubscribe?.()
+    try {
+      const channel = startRealtimeSync()
+      return () => {
+        channel?.unsubscribe?.()
+      }
+    } catch (err) {
+      console.error('Supabase realtime sync failed:', err)
     }
   }, [])
 

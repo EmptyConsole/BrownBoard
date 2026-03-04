@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { useCanvasStore } from '../store/canvasStore'
-import type { FileObject } from '../types/canvas'
+import type { FileObject, CanvasObject } from '../types/canvas'
 
 type RepoSeed = {
   repoId: string
@@ -35,7 +35,7 @@ export const applyGitHubChange = (repoId: string, changedPaths: string[]) => {
       const changed = changedPaths.some((path) => path === (file as FileObject).path)
       state.updateObject(file.id, { ...(file as FileObject), status: changed ? 'changed' : 'clean' })
       if (changed) {
-        state.addObject({
+        const suggestion: CanvasObject = {
           id: uuidv4(),
           type: 'ai-suggestion',
           position: { x: file.position.x, y: file.position.y - 40 },
@@ -45,7 +45,8 @@ export const applyGitHubChange = (repoId: string, changedPaths: string[]) => {
           metadata: { semantic: 'task' },
           suggestion: `File changed: ${(file as FileObject).path}`,
           targetIds: [file.id],
-        })
+        }
+        state.addObject(suggestion)
       }
     })
 }

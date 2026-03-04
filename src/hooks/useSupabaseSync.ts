@@ -9,7 +9,10 @@ export const useSupabaseSync = () => {
 
   useEffect(() => {
     const client = getSupabaseClient()
-    if (!client) return
+    if (!client) {
+      // Supabase disabled in local development
+      return
+    }
     const timer = window.setTimeout(() => {
       void upsertObjects(objects)
       void upsertVeins(veins)

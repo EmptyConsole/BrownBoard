@@ -57,26 +57,40 @@ export const startRealtimeSync = () => {
 
 export const upsertObjects = async (objects: CanvasObject[]) => {
   const client = getSupabaseClient()
-  if (!client) return
-  await client.from('canvas_objects').upsert(
-    objects.map((obj) => ({
-      id: obj.id,
-      type: obj.type,
-      data: obj,
-      updated_at: new Date().toISOString(),
-    })),
-    { onConflict: 'id' },
-  )
+  if (!client) {
+    // Local development: skip sync
+    return
+  }
+  try {
+    await client.from('canvas_objects').upsert(
+      objects.map((obj) => ({
+        id: obj.id,
+        type: obj.type,
+        data: obj,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: 'id' },
+    )
+  } catch (err) {
+    console.error('Failed to sync objects to Supabase:', err)
+  }
 }
 
 export const upsertVeins = async (veins: ActionVein[]) => {
   const client = getSupabaseClient()
-  if (!client) return
-  await client.from('veins').upsert(
-    veins.map((vein) => ({
-      ...vein,
-      updated_at: new Date().toISOString(),
-    })),
-    { onConflict: 'id' },
-  )
+  if (!client) {
+    // Local development: skip sync
+    return
+  }
+  try {
+    await client.from('veins').upsert(
+      veins.map((vein) => ({
+        ...vein,
+        updated_at: new Date().toISOString(),
+      })),
+      { onConflict: 'id' },
+    )
+  } catch (err) {
+    console.error('Failed to sync veins to Supabase:', err)
+  }
 }
