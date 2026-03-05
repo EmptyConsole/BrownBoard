@@ -1,3 +1,41 @@
+Steps:
+WhiteBoard
+    Draw
+    Erase
+Display Tab System
+    Bottom of screen based tabs
+    Similar to google chrome
+Project Management
+    Backlog
+        Task
+        Team member
+        Due Date
+        Urgency
+        Notes
+Between Account Projects
+    Ex: Shaayer can work on the same project from my account as Everett
+Expansion to Whiteboard
+    Shapes
+    Undo/Redo
+    Colors
+    Import image
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+From OG Cursor:
+
 # BrownBoard — Unified Canvas Platform
 
 Single-canvas product design & development workspace for planning, drafting, prototyping, and project tracking. Frontend uses React + Vite + TypeScript with PixiJS for WebGL rendering; Supabase will power realtime sync and persistence.
