@@ -6,6 +6,7 @@ interface DrawAction {
     points: { x: number; y: number }[];
     lineWidth?: number;
     eraseRadius?: number;
+    drawColor?: string;
 }
 
 /**
@@ -31,6 +32,30 @@ export const Whiteboard: React.FC = () => {
     const [actions, setActions] = useState<DrawAction[]>([]);
     const [currentAction, setCurrentAction] = useState<DrawAction | null>(null);
     const [mouseSize, setMouseSize] = useState(10);
+    const [drawColor, setDrawColor] = useState('#000000');
+    const [panX, setPanX] = useState(0);
+    const [panY, setPanY] = useState(0);
+    const [isPanning, setIsPanning] = useState(false);
+    const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+    const handleCanvasPan = (e: React.MouseEvent<HTMLCanvasElement> | MouseEvent, isMouseDown: boolean) => {
+        if (isMouseDown) {
+            // Start pan on right-click
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            setIsPanning(true);
+            setPanStart({ x: e.clientX - panX, y: e.clientY - panY });
+        } else {
+            // Update pan position on mouse move
+            if (!isPanning) return;
+            setPanX(e.clientX - panStart.x);
+            setPanY(e.clientY - panStart.y);
+        }
+    };
+
+    const stopPan = () => {
+        setIsPanning(false);
+    };
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -47,12 +72,14 @@ export const Whiteboard: React.FC = () => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Redraw all saved actions
+        // Redraw all saved actions with pan offset applied
+        ctx.save();
+        ctx.translate(panX, panY);
         for (const action of actions) {
             if (action.drawing) {
                 if (action.type === 'stroke') {
                     ctx.globalCompositeOperation = 'source-over';
-                    ctx.strokeStyle = '#000000';
+                    ctx.strokeStyle = action.drawColor || drawColor;
                 } else if (action.type === 'erase') {
                     ctx.globalCompositeOperation = 'destination-out';
                     // Don't set strokeStyle for erase—it doesn't matter visually
@@ -72,7 +99,7 @@ export const Whiteboard: React.FC = () => {
         if (currentAction && currentAction.drawing) {
             if (currentAction.type === 'stroke') {
                 ctx.globalCompositeOperation = 'source-over';
-                    ctx.strokeStyle = '#000000';
+                    ctx.strokeStyle = currentAction.drawColor || drawColor;
             } 
             else if (currentAction.type === 'erase') {
                 ctx.globalCompositeOperation = 'destination-out';
@@ -85,7 +112,7 @@ export const Whiteboard: React.FC = () => {
                 //     ctx.restore();
                 // }
             }
-            ctx.strokeStyle = '#000000';
+            ctx.strokeStyle = currentAction.drawColor || drawColor;
                 ctx.lineWidth = currentAction.lineWidth || mouseSize;
                 ctx.beginPath();
                 ctx.moveTo(currentAction.points[0].x, currentAction.points[0].y);
@@ -94,14 +121,16 @@ export const Whiteboard: React.FC = () => {
                 }
                 ctx.stroke();
         }
-    }, [actions, currentAction]);
+        ctx.restore();
+
+    }, [actions, currentAction, panX, panY]);
 
     const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = e.clientX - rect.left - panX;
+        const y = e.clientY - rect.top - panY;
 
         setIsDrawing(true);
         setCurrentAction({
@@ -109,25 +138,9 @@ export const Whiteboard: React.FC = () => {
             drawing: true,
             points: [{ x, y }],
             lineWidth: mouseSize,
-            eraseRadius: undefined
+            eraseRadius: undefined,
+            drawColor: tool === 'pen' ? drawColor : undefined
         });
-        
-        // Erase immediately on click if using eraser
-        // if (tool === 'eraser' && eraseRadius) {
-        //     const canvas = canvasRef.current;
-        //     if (canvas) {
-        //         const ctx = canvas.getContext('2d');
-        //         if (ctx) {
-        //             const radius = eraseRadius;
-        //             ctx.save();
-        //             ctx.beginPath();
-        //             ctx.arc(x, y, radius, 0, Math.PI * 2);
-        //             ctx.clip();
-        //             ctx.clearRect(x - radius, y - radius, radius * 2, radius * 2);
-        //             ctx.restore();
-        //         }
-        //     }
-        // }
     };
 
     const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -135,8 +148,8 @@ export const Whiteboard: React.FC = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = e.clientX - rect.left - panX;
+        const y = e.clientY - rect.top - panY;
 
         setCurrentAction({
             ...currentAction,
@@ -168,6 +181,13 @@ export const Whiteboard: React.FC = () => {
           circle.setAttribute('r', (number/2).toString());
           ctx!.lineWidth = number;
           console.log(`Mouse size set to: ${number}`);
+        }
+    }
+    const setDrawColorAndMore = (color: string) => {
+        setDrawColor(color);
+        const circle = document.getElementById('mouseSizeCircle');
+        if (circle) {
+          circle.setAttribute('stroke', color);
         }
     }
 
@@ -210,14 +230,31 @@ export const Whiteboard: React.FC = () => {
                     onChange={(e) => resizeDrawWidth(parseInt(e.target.value))} 
                     className="ml-4" 
                 />
+                <input type="color" id="colorPicker" value={drawColor} onChange={(e) => setDrawColorAndMore(e.target.value)} />
                 <span>{mouseSize}</span>
             </div>
             <canvas
                 ref={canvasRef}
-                onMouseDown={startDrawing}
-                onMouseMove={draw}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
+                onMouseDown={(e) => {
+                    if (e.button === 2) {
+                        handleCanvasPan(e, true);
+                    } else {
+                        startDrawing(e);
+                    }
+                }}
+                onMouseMove={(e) => {
+                    if (isPanning) {
+                        handleCanvasPan(e, false);
+                    } else {
+                        draw(e);
+                    }
+                }}
+                onMouseUp={isPanning ? stopPan : stopDrawing}
+                onMouseLeave={isPanning ? stopPan : stopDrawing}
+                onContextMenu={(e) => {
+                    e.preventDefault();
+                    return false;
+                }}
                 className="flex-1 cursor-crosshair bg-white"
             />
         </div>

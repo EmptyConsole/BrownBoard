@@ -1,24 +1,39 @@
 Steps:
-WhiteBoard
-Draw
-Erase
-Display Tab System
-Bottom of screen based tabs
-Similar to google chrome
-Project Management
-Backlog
-Task
-Team member
-Due Date
-Urgency
-Notes
-Between Account Projects
-Ex: Shaayer can work on the same project from my account as Everett
-Expansion to Whiteboard
-Shapes
-Undo/Redo
-Colors
-Import image
+
+# Initial WhiteBoard
+
+    Draw - Done
+    Erase - Done
+    Clear - Done
+    Colors - Done
+    Resize Cursor - Done
+    Movement of Page - Done
+    Zoom In
+    Zoom Out
+    Whiteboard UI
+
+# Project Management
+
+    Backlog
+        Task
+        Team member
+        Due Date
+        Urgency
+        Notes
+
+# Between Account Projects
+
+    Ex: Shaayer can work on the same project from my account as Everett
+
+# Whiteboard Expansion
+
+    Shapes
+    Undo/Redo
+    Import image
+
+# Display Tab System
+
+---
 
 From OG Cursor:
 
