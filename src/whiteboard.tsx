@@ -44,7 +44,6 @@ export const Whiteboard: React.FC = () => {
     const [isPanning, setIsPanning] = useState(false);
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
     const pinchStartDistance = useRef<number | null>(null);
-    
 
     const updatePan = (x: number, y: number) => {
         panRef.current = { x, y };
