@@ -8,6 +8,22 @@ interface DrawAction {
     eraseRadius?: number;
 }
 
+/**
+ * Whiteboard component for drawing and erasing on a canvas.
+ * 
+ * Provides a drawing interface with:
+ * - Pen tool for drawing strokes
+ * - Eraser tool for removing content
+ * - Adjustable brush/eraser size via range slider
+ * - Clear canvas button to reset
+ * - Visual cursor circle that tracks mouse position and reflects current brush size
+ * 
+ * @component
+ * @returns {JSX.Element} A full-screen whiteboard application with toolbar and canvas
+ * 
+ * @note `px` and `py` refer to pixel coordinates (x and y positions) in the canvas coordinate system.
+ * They represent the horizontal and vertical position respectively of a point being drawn or erased.
+ */
 export const Whiteboard: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
