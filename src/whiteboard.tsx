@@ -35,8 +35,21 @@ export const Whiteboard: React.FC = () => {
     const [drawColor, setDrawColor] = useState('#000000');
     const [panX, setPanX] = useState(0);
     const [panY, setPanY] = useState(0);
+    const [scale, setScale] = useState(1);
+    const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
+    const panRef = useRef({ x: 0, y: 0 });
+    const scaleRef = useRef(1);
+    const cursorTargetRef = useRef({ x: 0, y: 0 });
+    const cursorRef = useRef({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+    const pinchStartDistance = useRef<number | null>(null);
+
+    const updatePan = (x: number, y: number) => {
+        panRef.current = { x, y };
+        setPanX(x);
+        setPanY(y);
+    };
 
     const handleCanvasPan = (e: React.MouseEvent<HTMLCanvasElement> | MouseEvent, isMouseDown: boolean) => {
         if (isMouseDown) {
@@ -44,18 +57,43 @@ export const Whiteboard: React.FC = () => {
             const canvas = canvasRef.current;
             if (!canvas) return;
             setIsPanning(true);
-            setPanStart({ x: e.clientX - panX, y: e.clientY - panY });
+            setPanStart({ x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y });
         } else {
             // Update pan position on mouse move
             if (!isPanning) return;
-            setPanX(e.clientX - panStart.x);
-            setPanY(e.clientY - panStart.y);
+            updatePan(e.clientX - panStart.x, e.clientY - panStart.y);
         }
     };
 
+    const clampScale = (value: number) => Math.max(0.25, Math.min(4, value));
+
+    // Zoom keeping the whiteboard content under the focal point stationary.
+    const zoomAtPoint = (factor: number, clientX: number, clientY: number) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const focusX = clientX - rect.left;
+        const focusY = clientY - rect.top;
+        const prevScale = scaleRef.current;
+        const nextScale = clampScale(prevScale * factor);
+        const worldX = (focusX - panRef.current.x) / prevScale;
+        const worldY = (focusY - panRef.current.y) / prevScale;
+        const nextPanX = focusX - worldX * nextScale;
+        const nextPanY = focusY - worldY * nextScale;
+        scaleRef.current = nextScale;
+        setScale(nextScale);
+        updatePan(nextPanX, nextPanY);
+    };
+
     const handleWheelPan = (e: React.WheelEvent<HTMLCanvasElement>) => {
-        setPanX(panX - e.deltaX);
-        setPanY(panY - e.deltaY);
+        // Trackpad pinch emits wheel with ctrlKey; treat as zoom instead of pan
+        if (e.ctrlKey) {
+            const magnitude = Math.min(Math.abs(e.deltaY) / 200, 0.5) + 1;
+            const factor = e.deltaY < 0 ? magnitude : 1 / magnitude;
+            zoomAtPoint(factor, e.clientX, e.clientY);
+            return;
+        }
+        updatePan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY);
     };
 
     const stopPan = () => {
@@ -65,6 +103,20 @@ export const Whiteboard: React.FC = () => {
     // store canvas dimensions so we can drive the SVG overlay and
     // re‑size when the window changes without losing existing drawings
     const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+    // smooth cursor marker that follows pointer
+    useEffect(() => {
+        let raf: number;
+        const tick = () => {
+            const lerp = 0.2;
+            const nextX = cursorRef.current.x + (cursorTargetRef.current.x - cursorRef.current.x) * lerp;
+            const nextY = cursorRef.current.y + (cursorTargetRef.current.y - cursorRef.current.y) * lerp;
+            cursorRef.current = { x: nextX, y: nextY };
+            setCursorPos(cursorRef.current);
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, []);
 
     // helper that performs full redraw; can be called from resize handler
     const redraw = () => {
@@ -89,6 +141,7 @@ export const Whiteboard: React.FC = () => {
         // draw saved actions
         ctx.save();
         ctx.translate(panX, panY);
+        ctx.scale(scale, scale);
         for (const action of actions) {
             if (action.drawing) {
                 if (action.type === 'stroke') {
@@ -97,7 +150,7 @@ export const Whiteboard: React.FC = () => {
                 } else if (action.type === 'erase') {
                     ctx.globalCompositeOperation = 'destination-out';
                 }
-                ctx.lineWidth = action.lineWidth || mouseSize;
+                ctx.lineWidth = (action.lineWidth || mouseSize) / scale;
                 ctx.beginPath();
                 ctx.moveTo(action.points[0].x, action.points[0].y);
                 for (let i = 1; i < action.points.length; i++) {
@@ -116,7 +169,7 @@ export const Whiteboard: React.FC = () => {
                 ctx.globalCompositeOperation = 'destination-out';
             }
             ctx.strokeStyle = currentAction.drawColor || drawColor;
-            ctx.lineWidth = currentAction.lineWidth || mouseSize;
+            ctx.lineWidth = (currentAction.lineWidth || mouseSize) / scale;
             ctx.beginPath();
             ctx.moveTo(currentAction.points[0].x, currentAction.points[0].y);
             for (let i = 1; i < currentAction.points.length; i++) {
@@ -130,7 +183,7 @@ export const Whiteboard: React.FC = () => {
     // effect drives redraw whenever relevant state changes
     useEffect(() => {
         redraw();
-    }, [actions, currentAction, panX, panY, canvasSize]);
+    }, [actions, currentAction, panX, panY, canvasSize, scale]);
 
     // resize listener that updates canvasSize from the element’s
     // client dimensions.  clientWidth/Height reflect the size of the
@@ -153,8 +206,8 @@ export const Whiteboard: React.FC = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left - panX;
-        const y = e.clientY - rect.top - panY;
+        const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
+        const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
 
         setIsDrawing(true);
         setCurrentAction({
@@ -172,8 +225,8 @@ export const Whiteboard: React.FC = () => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left - panX;
-        const y = e.clientY - rect.top - panY;
+        const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
+        const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
 
         setCurrentAction({
             ...currentAction,
@@ -214,6 +267,57 @@ export const Whiteboard: React.FC = () => {
         }
     }
 
+    const handlePinchZoomIn = (factor: number, centerX: number, centerY: number) => {
+        zoomAtPoint(factor, centerX, centerY);
+    };
+
+    const handlePinchZoomOut = (factor: number, centerX: number, centerY: number) => {
+        zoomAtPoint(1 / factor, centerX, centerY);
+    };
+
+    const getPinchInfo = (touches: React.TouchList) => {
+        const a = touches.item(0);
+        const b = touches.item(1);
+        if (!a || !b) return { distance: 0, centerX: 0, centerY: 0 };
+        const dx = a.clientX - b.clientX;
+        const dy = a.clientY - b.clientY;
+        return {
+            distance: Math.hypot(dx, dy),
+            centerX: (a.clientX + b.clientX) / 2,
+            centerY: (a.clientY + b.clientY) / 2,
+        };
+    };
+
+    const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+        if (e.touches.length === 2) {
+            const { distance } = getPinchInfo(e.touches);
+            pinchStartDistance.current = distance;
+        }
+    };
+
+    const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const { distance: currentDistance, centerX, centerY } = getPinchInfo(e.touches);
+            const initialDistance = pinchStartDistance.current;
+            if (!initialDistance) {
+                pinchStartDistance.current = currentDistance;
+                return;
+            }
+            const changeRatio = currentDistance / initialDistance;
+            if (changeRatio > 1.01) {
+                handlePinchZoomIn(changeRatio, centerX, centerY);
+            } else if (changeRatio < 0.99) {
+                handlePinchZoomOut(1 / changeRatio, centerX, centerY);
+            }
+            pinchStartDistance.current = currentDistance;
+        }
+    };
+
+    const handleTouchEnd = () => {
+        pinchStartDistance.current = null;
+    };
+
     return (
         <div className="flex flex-col h-screen bg-white overflow-hidden">
             <svg
@@ -223,8 +327,8 @@ export const Whiteboard: React.FC = () => {
             >
             <circle
                 id="mouseSizeCircle"
-                cx="10"
-                cy="10"
+                cx={cursorPos.x}
+                cy={cursorPos.y}
                 r="10"
                 stroke="black"
                 strokeWidth="1"
@@ -260,7 +364,7 @@ export const Whiteboard: React.FC = () => {
             </div>
             <canvas
                 ref={canvasRef}
-                style={{ width: '100%', height: '100%' }}
+                style={{ width: '100%', height: '100%', touchAction: 'none' }}
                 onMouseDown={(e) => {
                     if (e.button === 2) {
                         handleCanvasPan(e, true);
@@ -269,6 +373,7 @@ export const Whiteboard: React.FC = () => {
                     }
                 }}
                 onMouseMove={(e) => {
+                    cursorTargetRef.current = { x: e.clientX, y: e.clientY };
                     if (isPanning) {
                         handleCanvasPan(e, false);
                     } else if (e.button === 0) {
@@ -278,6 +383,9 @@ export const Whiteboard: React.FC = () => {
                 onMouseUp={isPanning ? stopPan : stopDrawing}
                 onMouseLeave={isPanning ? stopPan : stopDrawing}
                 onWheel={handleWheelPan}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
                 onContextMenu={(e) => {
                     e.preventDefault();
                     return false;
