@@ -1,38 +1,24 @@
 Steps:
 WhiteBoard
-    Draw
-    Erase
+Draw
+Erase
 Display Tab System
-    Bottom of screen based tabs
-    Similar to google chrome
+Bottom of screen based tabs
+Similar to google chrome
 Project Management
-    Backlog
-        Task
-        Team member
-        Due Date
-        Urgency
-        Notes
+Backlog
+Task
+Team member
+Due Date
+Urgency
+Notes
 Between Account Projects
-    Ex: Shaayer can work on the same project from my account as Everett
+Ex: Shaayer can work on the same project from my account as Everett
 Expansion to Whiteboard
-    Shapes
-    Undo/Redo
-    Colors
-    Import image
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Shapes
+Undo/Redo
+Colors
+Import image
 
 From OG Cursor:
 
@@ -55,6 +41,7 @@ VITE_SUPABASE_ANON_KEY=<your_supabase_anon_key>
 ```
 
 ## Tech stack
+
 - React + TypeScript + Vite
 - PixiJS for GPU canvas rendering
 - Zustand for local canvas state
@@ -63,12 +50,14 @@ VITE_SUPABASE_ANON_KEY=<your_supabase_anon_key>
 - Vitest for unit tests
 
 ## Scripts
+
 - `npm run dev` — start Vite dev server
 - `npm run build` — type-check then build
 - `npm run lint` — ESLint with Prettier compatibility
 - `npm test` — Vitest unit tests
 
 ## Project goals
+
 - Dark-mode, 8px grid-aligned UI
 - Single infinite canvas with drafting + prototyping tools
 - Realtime collaboration via Supabase
@@ -76,16 +65,19 @@ VITE_SUPABASE_ANON_KEY=<your_supabase_anon_key>
 - Inline AI suggestions (no modals) aligned to the grid
 
 ## Supabase schema (excerpt)
+
 - `canvas_objects`: JSON payload for all canvas entities
 - `veins`: Action Veins connections
 - `tasks`, `repos`, `files`, `links`: task metadata + GitHub file links
-See `supabase/schema.sql` for table definitions and policies.
+  See `supabase/schema.sql` for table definitions and policies.
 
 ## GitHub integration
+
 - Use the GitHub panel on the right to drop a repo and file list onto the canvas.
 - `Mark App.tsx changed` toggles change indicators and spawns an inline AI hint.
 - Link a selected file to another selected object to propagate change context.
 
 ## AI assist
+
 - Toolbar includes `AI tidy` to detect overlaps/clutter and render ghost suggestions.
 - GitHub change events surface inline suggestion banners near impacted files.

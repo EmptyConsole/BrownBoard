@@ -12,7 +12,8 @@ function createWindow() {
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.ts'),
+      // preload is compiled to JS in dist-electron
+      preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
     },

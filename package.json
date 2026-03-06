@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/main.ts",
   "scripts": {
     "dev": "concurrently \"vite\" \"npm run electron-dev\"",
-    "electron-dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "build": "tsc -b && vite build && tsc --project tsconfig.electron.json",
+    "electron-dev": "npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron dist-electron/main.js",
+    "build:electron": "tsc --project tsconfig.electron.json",
+    "build": "tsc -b && vite build && npm run build:electron",
     "electron-build": "electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -50,5 +51,10 @@
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "tar": "7.5.10",
+    "tmp": "0.2.5",
+    "@tootallnate/once": "3.0.1"
   }
 }
