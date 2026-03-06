@@ -150,7 +150,7 @@ export const Whiteboard: React.FC = () => {
                 } else if (action.type === 'erase') {
                     ctx.globalCompositeOperation = 'destination-out';
                 }
-                ctx.lineWidth = (action.lineWidth || mouseSize) / scale;
+                ctx.lineWidth = (action.lineWidth || mouseSize);
                 ctx.beginPath();
                 ctx.moveTo(action.points[0].x, action.points[0].y);
                 for (let i = 1; i < action.points.length; i++) {
@@ -169,7 +169,7 @@ export const Whiteboard: React.FC = () => {
                 ctx.globalCompositeOperation = 'destination-out';
             }
             ctx.strokeStyle = currentAction.drawColor || drawColor;
-            ctx.lineWidth = (currentAction.lineWidth || mouseSize) / scale;
+            ctx.lineWidth = (currentAction.lineWidth || mouseSize);
             ctx.beginPath();
             ctx.moveTo(currentAction.points[0].x, currentAction.points[0].y);
             for (let i = 1; i < currentAction.points.length; i++) {
