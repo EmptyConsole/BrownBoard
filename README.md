@@ -11,6 +11,10 @@ Steps:
     Zoom In
     Zoom Out
     Whiteboard UI
+    IF YOU HOLD SHIFT
+        stright line aligned to grid
+    IF YOU HOLD OPTION
+        stright line from mouse to start
 
 # Project Management
 
