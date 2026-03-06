@@ -83,6 +83,7 @@ export const Whiteboard: React.FC = () => {
         scaleRef.current = nextScale;
         setScale(nextScale);
         updatePan(nextPanX, nextPanY);
+        resizeDrawWidth(mouseSize);
     };
 
     const handleWheelPan = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -107,7 +108,7 @@ export const Whiteboard: React.FC = () => {
     useEffect(() => {
         let raf: number;
         const tick = () => {
-            const lerp = 0.2;
+            const lerp = 1;
             const nextX = cursorRef.current.x + (cursorTargetRef.current.x - cursorRef.current.x) * lerp;
             const nextY = cursorRef.current.y + (cursorTargetRef.current.y - cursorRef.current.y) * lerp;
             cursorRef.current = { x: nextX, y: nextY };
@@ -255,7 +256,7 @@ export const Whiteboard: React.FC = () => {
         const circle = document.getElementById('mouseSizeCircle');
         const ctx = canvasRef.current.getContext('2d');
         if (circle) {
-          circle.setAttribute('r', (number/2).toString());
+          circle.setAttribute('r', (number/2*scale).toString());
           ctx!.lineWidth = number;
         }
     }
@@ -269,10 +270,12 @@ export const Whiteboard: React.FC = () => {
 
     const handlePinchZoomIn = (factor: number, centerX: number, centerY: number) => {
         zoomAtPoint(factor, centerX, centerY);
+        resizeDrawWidth(mouseSize);
     };
 
     const handlePinchZoomOut = (factor: number, centerX: number, centerY: number) => {
         zoomAtPoint(1 / factor, centerX, centerY);
+        resizeDrawWidth(mouseSize);
     };
 
     const getPinchInfo = (touches: React.TouchList) => {
@@ -329,7 +332,7 @@ export const Whiteboard: React.FC = () => {
                 id="mouseSizeCircle"
                 cx={cursorPos.x}
                 cy={cursorPos.y}
-                r="10"
+                r="5"
                 stroke="black"
                 strokeWidth="1"
                 fill="none"
