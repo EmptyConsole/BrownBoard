@@ -44,7 +44,7 @@ export const Whiteboard: React.FC = () => {
     const [isPanning, setIsPanning] = useState(false);
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
     const pinchStartDistance = useRef<number | null>(null);
-    const [drawStartPos, setDrawStartPos] = useState({ x: 0, y: 0 });
+    
 
     const updatePan = (x: number, y: number) => {
         panRef.current = { x, y };
@@ -210,7 +210,6 @@ export const Whiteboard: React.FC = () => {
         const rect = canvas.getBoundingClientRect();
         const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
         const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
-        setDrawStartPos({x:x,y:y});
         setIsDrawing(true);
         setCurrentAction({
             type: tool === 'pen' ? 'stroke' : 'erase',
@@ -229,20 +228,6 @@ export const Whiteboard: React.FC = () => {
         const rect = canvas.getBoundingClientRect();
         const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
         const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
-        const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-            if (e.key === 'Option') {
-                for (let i = 0; i < currentAction.points.length; i++) {
-                    const point = currentAction.points[i];
-                    const dx = point.x - drawStartPos.x;
-                    const dy = point.y - drawStartPos.y;
-                    currentAction.points[i] = { x: x + dx, y: y + dy };
-                }
-                setCurrentAction({
-                    ...currentAction,
-                    points: currentAction.points
-                });
-            }
-        }
         setCurrentAction({
             ...currentAction,
             points: [...currentAction.points, { x, y }]
