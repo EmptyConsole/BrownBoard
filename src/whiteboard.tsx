@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, use } from 'react';
-import { Pen, Eraser, Trash2, Minus, Plus } from 'lucide-react';
+import { Pen, Eraser, Trash2, Minus, Plus, Undo2, Redo2 } from 'lucide-react';
 
 interface DrawAction {
     type: 'stroke' | 'erase';
@@ -45,6 +45,8 @@ export const Whiteboard: React.FC = () => {
     const [isPanning, setIsPanning] = useState(false);
     const [panStart, setPanStart] = useState({ x: 0, y: 0 });
     const pinchStartDistance = useRef<number | null>(null);
+    const [history, setHistory] = useState<DrawAction[][]>([]);
+    const [redoStack, setRedoStack] = useState<DrawAction[][]>([]);
 
     const updatePan = (x: number, y: number) => {
         panRef.current = { x, y };
@@ -273,16 +275,51 @@ export const Whiteboard: React.FC = () => {
 
     const stopDrawing = () => {
         if (currentAction) {
-            setActions([...actions, currentAction]);
+            const newActions = [...actions, currentAction];
+            setHistory(prev => [...prev, actions]); // save previous state
+            setRedoStack([]); // clear redo on new action
+            setActions(newActions);
             setCurrentAction(null);
         }
         setIsDrawing(false);
     };
 
-    const clearCanvas = () => {
-        setActions([]);
-        setCurrentAction(null);
+    const undo = () => {
+    if (history.length === 0) return;
+    const previous = history[history.length - 1];
+    setRedoStack(prev => [...prev, actions]);
+    setHistory(prev => prev.slice(0, -1));
+    setActions(previous);
+};
+
+const redo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setHistory(prev => [...prev, actions]);
+    setRedoStack(prev => prev.slice(0, -1));
+    setActions(next);
+};
+useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.metaKey || e.ctrlKey) {
+            if (e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                undo();
+            } else if (e.key === 'z' && e.shiftKey) {
+                e.preventDefault();
+                redo();
+            }
+        }
     };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+}, [undo, redo]);
+
+    const clearCanvas = () => {
+    setHistory(prev => [...prev, actions]);
+    setRedoStack([]);
+    setActions([]);
+};
     const resizeDrawWidth = (number: number) => {
         if (!canvasRef.current) return;
         if (!mouseSize) return;
@@ -454,6 +491,24 @@ export const Whiteboard: React.FC = () => {
                     <Trash2 size={16} strokeWidth={2} />
                 </button>
             </div>
+            <div className="flex items-center gap-1 px-3 border-r border-gray-200">
+    <button
+        onClick={undo}
+        disabled={history.length === 0}
+        title="Undo (⌘Z)"
+        className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
+    >
+        <Undo2 size={16} strokeWidth={2} />
+    </button>
+    <button
+        onClick={redo}
+        disabled={redoStack.length === 0}
+        title="Redo (⌘⇧Z)"
+        className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
+    >
+        <Redo2 size={16} strokeWidth={2} />
+    </button>
+</div>
         </div>
 
         <canvas
