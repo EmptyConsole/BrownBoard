@@ -107,3 +107,5 @@ VITE_SUPABASE_ANON_KEY=<your_supabase_anon_key>
 
 - Toolbar includes `AI tidy` to detect overlaps/clutter and render ghost suggestions.
 - GitHub change events surface inline suggestion banners near impacted files.
+
+hi
