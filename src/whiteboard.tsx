@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, use } from 'react';
 import { Pen, Eraser, Trash2, Minus, Plus, Undo2, Redo2 } from 'lucide-react';
 
 interface DrawAction {
@@ -55,7 +55,7 @@ export const Whiteboard: React.FC = () => {
     };
 
     const handleCanvasPan = (e: React.MouseEvent<HTMLCanvasElement> | MouseEvent, isMouseDown: boolean) => {
-        e.preventDefault();
+        // e.preventDefault();
         if (isMouseDown) {
             // Start pan on right-click
             const canvas = canvasRef.current;
@@ -90,17 +90,7 @@ export const Whiteboard: React.FC = () => {
         resizeDrawWidth(mouseSize);
     };
 
-    const handleWheelPan = (e: React.WheelEvent<HTMLCanvasElement>) => {
-        e.preventDefault();
-        // Trackpad pinch emits wheel with ctrlKey; treat as zoom instead of pan
-        if (e.ctrlKey) {
-            const magnitude = Math.min(Math.abs(e.deltaY) / 200, 0.5) + 1;
-            const factor = e.deltaY < 0 ? magnitude : 1 / magnitude;
-            zoomAtPoint(factor, e.clientX, e.clientY);
-            return;
-        }
-        updatePan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY);
-    };
+    
 
     const stopPan = () => {
         setIsPanning(false);
@@ -353,7 +343,7 @@ useEffect(() => {
         resizeDrawWidth(mouseSize);
     };
 
-    const getPinchInfo = (touches: React.TouchList) => {
+    const getPinchInfo = (touches: TouchList) => {
         const a = touches.item(0);
         const b = touches.item(1);
         if (!a || !b) return { distance: 0, centerX: 0, centerY: 0 };
@@ -366,18 +356,13 @@ useEffect(() => {
         };
     };
 
-    const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-        e.preventDefault();
-        if (e.touches.length === 2) {
-            const { distance } = getPinchInfo(e.touches);
-            pinchStartDistance.current = distance;
-        }
-    };
+    useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const handleTouchMove = (e: TouchEvent) => {
         e.preventDefault();
         if (e.touches.length === 2) {
-            e.preventDefault();
             const { distance: currentDistance, centerX, centerY } = getPinchInfo(e.touches);
             const initialDistance = pinchStartDistance.current;
             if (!initialDistance) {
@@ -393,6 +378,33 @@ useEffect(() => {
             pinchStartDistance.current = currentDistance;
         }
     };
+    const handleTouchStart = (e: TouchEvent) => {
+        e.preventDefault();
+        if (e.touches.length === 2) {
+            const { distance } = getPinchInfo(e.touches);
+            pinchStartDistance.current = distance;
+        }
+    };
+    const handleWheelPan = (e: WheelEvent) => {
+        e.preventDefault();
+        // Trackpad pinch emits wheel with ctrlKey; treat as zoom instead of pan
+        if (e.ctrlKey) {
+            const magnitude = Math.min(Math.abs(e.deltaY) / 200, 0.5) + 1;
+            const factor = e.deltaY < 0 ? magnitude : 1 / magnitude;
+            zoomAtPoint(factor, e.clientX, e.clientY);
+            return;
+        }
+        updatePan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY);
+    };
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('wheel', handleWheelPan, { passive: false });
+return () => {
+    canvas.removeEventListener('touchmove', handleTouchMove);
+    canvas.removeEventListener('touchstart', handleTouchStart);
+    canvas.removeEventListener('wheel', handleWheelPan);
+};
+}, [handlePinchZoomIn, handlePinchZoomOut]);
 
     const handleTouchEnd = () => {
         pinchStartDistance.current = null;
@@ -535,9 +547,9 @@ useEffect(() => {
             }}
             onMouseUp={isPanning ? stopPan : stopDrawing}
             onMouseLeave={isPanning ? stopPan : stopDrawing}
-            onWheel={handleWheelPan}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
+            // onWheel={handleWheelPan}
+            // onTouchStart={handleTouchStart}
+            // onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
             onContextMenu={(e) => {
                 e.preventDefault();
