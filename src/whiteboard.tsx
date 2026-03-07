@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, use } from 'react';
+import { Pen, Eraser, Trash2, Minus, Plus } from 'lucide-react';
 
 interface DrawAction {
     type: 'stroke' | 'erase';
@@ -194,6 +195,8 @@ export const Whiteboard: React.FC = () => {
         const handleResize = () => {
             const canvasEl = canvasRef.current;
             if (canvasEl) {
+                canvasEl.width = canvasEl.clientWidth;
+                canvasEl.height = canvasEl.clientHeight;
                 setCanvasSize({ width: canvasEl.clientWidth, height: canvasEl.clientHeight });
             }
         };
@@ -354,13 +357,20 @@ export const Whiteboard: React.FC = () => {
         pinchStartDistance.current = null;
     };
 
+    function clamp(arg0: number, arg1: number, arg2: number): number {
+        if (arg0 < arg1) return arg1;
+        if (arg0 > arg2) return arg2;
+        return arg0;
+    }
+
     return (
-        <div className="flex flex-col h-screen bg-white overflow-hidden">
-            <svg
-                width="100%"
-                height="100%"
-                className="absolute top-0 left-0 pointer-events-none"
-            >
+    <div className="flex flex-col h-screen bg-white overflow-hidden">
+        <svg
+            width="100%"
+            height="100%"
+            className="absolute top-0 left-0 pointer-events-none"
+            style={{ zIndex: 10 }}
+        >
             <circle
                 id="mouseSizeCircle"
                 cx={cursorPos.x}
@@ -371,63 +381,111 @@ export const Whiteboard: React.FC = () => {
                 fill="none"
             />
         </svg>
-            <div className="p-4 bg-gray-100 flex gap-10 items-center">
+
+        {/* Header toolbar */}
+        <div className="flex items-center justify-center gap-1 px-3 py-2 bg-white border-b border-gray-100 shadow-sm select-none" style={{ zIndex: 5 }}>
+            
+            {/* Tool group */}
+            <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
                 <button
                     onClick={() => setTool('pen')}
-                    className={`px-4 py-2 rounded ${tool === 'pen' ? 'bg-blue-500 text-white border-gray-400 border' : 'bg-gray-300'}`}
+                    title="Pen (P)"
+                    className={`p-2 rounded-lg transition-all duration-150 ${
+                        tool === 'pen'
+                            ? 'bg-gray-900 text-white shadow-sm'
+                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                    }`}
                 >
-                    Pen
+                    <Pen size={16} strokeWidth={2} />
                 </button>
                 <button
                     onClick={() => setTool('eraser')}
-                    className={`px-4 py-2 rounded ${tool === 'eraser' ? 'bg-blue-500 text-white border-gray-400 border' : 'bg-gray-300'}`}
+                    title="Eraser (E)"
+                    className={`p-2 rounded-lg transition-all duration-150 ${
+                        tool === 'eraser'
+                            ? 'bg-gray-900 text-white shadow-sm'
+                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                    }`}
                 >
-                    Eraser
+                    <Eraser size={16} strokeWidth={2} />
                 </button>
-                <button onClick={clearCanvas} className="px-4 py-2 rounded bg-red-500 text-white">
-                    Clear
-                </button>
-                <input 
-                    type="range" 
-                    min="1" 
-                    max="50" 
-                    value={mouseSize} 
-                    onChange={(e) => resizeDrawWidth(parseInt(e.target.value))} 
-                    className="ml-4" 
-                />
-                <input type="color" id="colorPicker" value={drawColor} onChange={(e) => setDrawColorAndMore(e.target.value)} />
-                <span>{mouseSize}</span>
             </div>
-            <canvas
-                ref={canvasRef}
-                style={{ width: '100%', height: '100%', touchAction: 'none' }}
-                onMouseDown={(e) => {
-                    if (e.button === 2) {
-                        handleCanvasPan(e, true);
-                    } else if (e.button === 0) {
-                        startDrawing(e);
-                    }
-                }}
-                onMouseMove={(e) => {
-                    cursorTargetRef.current = { x: e.clientX, y: e.clientY };
-                    if (isPanning) {
-                        handleCanvasPan(e, false);
-                    } else if (e.button === 0) {
-                        draw(e);
-                    }
-                }}
-                onMouseUp={isPanning ? stopPan : stopDrawing}
-                onMouseLeave={isPanning ? stopPan : stopDrawing}
-                onWheel={handleWheelPan}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                onContextMenu={(e) => {
-                    e.preventDefault();
-                    return false;
-                }}
-                className="flex-1 cursor-crosshair bg-white"
-            />
+
+            {/* Size group */}
+            <div className="flex items-center gap-2 px-3 border-r border-gray-200">
+                <Minus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={(e)=>resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}/>
+                <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={mouseSize}
+                    onChange={(e) => resizeDrawWidth(parseInt(e.target.value))}
+                    className="w-20 accent-gray-800"
+                    title="Brush size"
+                />
+                <Plus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={(e)=>resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}/>
+                <span className="text-xs text-gray-400 w-5 text-right tabular-nums">{mouseSize}</span>
+            </div>
+
+            {/* Color group */}
+            <div className="flex items-center gap-2 px-3 border-r border-gray-200">
+                <label
+                    htmlFor="colorPicker"
+                    className="w-6 h-6 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110"
+                    style={{ backgroundColor: drawColor }}
+                    title="Color"
+                />
+                <input
+                    type="color"
+                    id="colorPicker"
+                    value={drawColor}
+                    onChange={(e) => setDrawColorAndMore(e.target.value)}
+                    className="sr-only"
+                />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1 pl-1">
+                <button
+                    onClick={clearCanvas}
+                    title="Clear canvas"
+                    className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
+                >
+                    <Trash2 size={16} strokeWidth={2} />
+                </button>
+            </div>
         </div>
-    );
+
+        <canvas
+            ref={canvasRef}
+            style={{ width: '100%', height: '100%', touchAction: 'none' }}
+            onMouseDown={(e) => {
+                if (e.button === 2) {
+                    handleCanvasPan(e, true);
+                } else if (e.button === 0) {
+                    startDrawing(e);
+                }
+            }}
+            onMouseMove={(e) => {
+                cursorTargetRef.current = { x: e.clientX, y: e.clientY };
+                if (isPanning) {
+                    handleCanvasPan(e, false);
+                } else if (e.button === 0) {
+                    draw(e);
+                }
+            }}
+            onMouseUp={isPanning ? stopPan : stopDrawing}
+            onMouseLeave={isPanning ? stopPan : stopDrawing}
+            onWheel={handleWheelPan}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onContextMenu={(e) => {
+                e.preventDefault();
+                return false;
+            }}
+            className="flex-1 cursor-crosshair bg-white"
+        />
+    </div>
+);
 };
