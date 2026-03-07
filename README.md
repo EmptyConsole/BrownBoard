@@ -8,13 +8,13 @@ Steps:
     Colors - Done
     Resize Cursor - Done
     Movement of Page - Done
-    Zoom In
-    Zoom Out
-    Whiteboard UI
-    IF YOU HOLD SHIFT
-        stright line aligned to grid
-    IF YOU HOLD OPTION
-        stright line from mouse to start
+    Zoom In - Done
+    Zoom Out - Done
+    Whiteboard UI - Done
+    IF YOU HOLD SHIFT - Done
+        stright line aligned to grid - Done
+    IF YOU HOLD OPTION - Done
+        stright line from mouse to start - Done
 
 # Project Management
 
