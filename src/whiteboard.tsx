@@ -55,6 +55,7 @@ export const Whiteboard: React.FC = () => {
     };
 
     const handleCanvasPan = (e: React.MouseEvent<HTMLCanvasElement> | MouseEvent, isMouseDown: boolean) => {
+        e.preventDefault();
         if (isMouseDown) {
             // Start pan on right-click
             const canvas = canvasRef.current;
@@ -90,6 +91,7 @@ export const Whiteboard: React.FC = () => {
     };
 
     const handleWheelPan = (e: React.WheelEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
         // Trackpad pinch emits wheel with ctrlKey; treat as zoom instead of pan
         if (e.ctrlKey) {
             const magnitude = Math.min(Math.abs(e.deltaY) / 200, 0.5) + 1;
@@ -365,6 +367,7 @@ useEffect(() => {
     };
 
     const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
         if (e.touches.length === 2) {
             const { distance } = getPinchInfo(e.touches);
             pinchStartDistance.current = distance;
@@ -372,6 +375,7 @@ useEffect(() => {
     };
 
     const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
         if (e.touches.length === 2) {
             e.preventDefault();
             const { distance: currentDistance, centerX, centerY } = getPinchInfo(e.touches);
