@@ -1,9 +1,12 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { Pen, Eraser, Trash2, Minus, Plus, Undo2, Redo2, Settings } from 'lucide-react'
 import { HexColorPicker } from 'react-colorful'
+import { supabase } from './lib/supabase'
 
 interface DrawAction {
+  id?: string
   type: 'stroke' | 'erase'
+  userId?: string
   drawing: true | false
   points: { x: number; y: number }[]
   lineWidth?: number
@@ -13,7 +16,22 @@ interface DrawAction {
 
 /**
  * Whiteboard component for drawing and erasing on a canvas.
- *
+ *const handleMouseMove = (e: MouseEvent) => {
+    if (channelRef.current && isSubscribedRef.current) {
+        // Convert screen coords to world coords
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const rect = canvas.getBoundingClientRect()
+        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+        const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+
+        channelRef.current.track({
+            x: worldX,
+            y: worldY,
+            userId: userIdRef.current,
+        })
+    }
+}
  * Provides a drawing interface with:
  * - Pen tool for drawing strokes
  * - Eraser tool for removing content
@@ -46,8 +64,10 @@ export const Whiteboard: React.FC = () => {
   const [isPanning, setIsPanning] = useState(false)
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
   const pinchStartDistance = useRef<number | null>(null)
-  const [history, setHistory] = useState<DrawAction[][]>([])
-  const [redoStack, setRedoStack] = useState<DrawAction[][]>([])
+  const myUndoStack = useRef<DrawAction[]>([]) // strokes I can undo
+  const myRedoStack = useRef<DrawAction[]>([]) // strokes I can redo
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
   const [showColorPicker, setShowColorPicker] = useState(false)
   const swatches = [
     '#0a0a0a',
@@ -63,6 +83,10 @@ export const Whiteboard: React.FC = () => {
     '#f43f5e',
     '#64748b',
   ]
+  const [otherCursors, setOtherCursors] = useState<{ x: number; y: number; userId: string }[]>([])
+  const userIdRef = useRef<string>(crypto.randomUUID())
+  const isSubscribedRef = useRef(false)
+  const channelRef = useRef<any>(null)
 
   const updatePan = (x: number, y: number) => {
     panRef.current = { x, y }
@@ -224,6 +248,8 @@ export const Whiteboard: React.FC = () => {
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
     setIsDrawing(true)
     setCurrentAction({
+      id: crypto.randomUUID(),
+      userId: userIdRef.current,
       type: tool === 'pen' ? 'stroke' : 'erase',
       drawing: true,
       points: [{ x, y }],
@@ -283,31 +309,63 @@ export const Whiteboard: React.FC = () => {
     }
   }
 
-  const stopDrawing = () => {
-    if (currentAction) {
-      const newActions = [...actions, currentAction]
-      setHistory((prev) => [...prev, actions]) // save previous state
-      setRedoStack([]) // clear redo on new action
-      setActions(newActions)
-      setCurrentAction(null)
+  const stopDrawing = async () => {
+    if (!currentAction) {
+      setIsDrawing(false)
+      return
     }
+
+    const action = currentAction
+    setCurrentAction(null)
     setIsDrawing(false)
+    setActions((prev) => [...prev, action])
+
+    // Track in personal undo stack
+    myUndoStack.current.push(action)
+    myRedoStack.current = [] // clear redo on new stroke
+    setCanUndo(true)
+    setCanRedo(false)
+
+    supabase.from('strokes').insert({ room_id: roomId, data: action }).then()
   }
 
-  const undo = () => {
-    if (history.length === 0) return
-    const previous = history[history.length - 1]
-    setRedoStack((prev) => [...prev, actions])
-    setHistory((prev) => prev.slice(0, -1))
-    setActions(previous)
+  const undo = async () => {
+    // Check if last action was a clear
+    if (myUndoStack.current.length === 0 && myClearStack.current.length > 0) {
+      const restored = myClearStack.current.pop()!
+      setActions(restored)
+      setCanUndo(myUndoStack.current.length > 0 || myClearStack.current.length > 0)
+      // Re-insert all restored strokes
+      await supabase.from('strokes').insert(restored.map((s) => ({ room_id: roomId, data: s })))
+      await broadcastEvent('set_state', { actions: restored })
+      return
+    }
+
+    if (myUndoStack.current.length === 0) return
+    const stroke = myUndoStack.current.pop()!
+    myRedoStack.current.push(stroke)
+    setCanUndo(myUndoStack.current.length > 0 || myClearStack.current.length > 0)
+    setCanRedo(true)
+
+    const newActions = actions.filter((a) => a.id !== stroke.id)
+    setActions(newActions)
+    await supabase.from('strokes').delete().eq('data->>id', stroke.id).eq('room_id', roomId)
+    await broadcastEvent('set_state', { actions: newActions })
   }
 
-  const redo = () => {
-    if (redoStack.length === 0) return
-    const next = redoStack[redoStack.length - 1]
-    setHistory((prev) => [...prev, actions])
-    setRedoStack((prev) => prev.slice(0, -1))
-    setActions(next)
+  const redo = async () => {
+    if (myRedoStack.current.length === 0) return
+    const stroke = myRedoStack.current.pop()!
+    myUndoStack.current.push(stroke)
+    setCanRedo(myRedoStack.current.length > 0)
+    setCanUndo(true)
+
+    const newActions = [...actions, stroke]
+    setActions(newActions)
+
+    // Re-insert to Supabase
+    await supabase.from('strokes').insert({ room_id: roomId, data: stroke })
+    await broadcastEvent('set_state', { actions: newActions })
   }
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -324,11 +382,17 @@ export const Whiteboard: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [undo, redo])
-
+  const myClearStack = useRef<DrawAction[][]>([])
   const clearCanvas = () => {
-    setHistory((prev) => [...prev, actions])
-    setRedoStack([])
+    myClearStack.current.push([...actions]) // save full state
+    myUndoStack.current = []
+    myRedoStack.current = []
+    setCanUndo(true) // can undo the clear
+    setCanRedo(false)
+
     setActions([])
+    supabase.from('strokes').delete().eq('room_id', roomId).then()
+    broadcastEvent('clear')
   }
   const resizeDrawWidth = (number: number) => {
     if (!canvasRef.current) return
@@ -433,6 +497,122 @@ export const Whiteboard: React.FC = () => {
     if (arg0 > arg2) return arg2
     return arg0
   }
+  const roomId = 'room_1' // later make this dynamic per session
+
+  useEffect(() => {
+    // Load existing strokes
+    const loadStrokes = async () => {
+      const { data } = await supabase
+        .from('strokes')
+        .select('data')
+        .eq('room_id', roomId)
+        .order('created_at')
+
+      if (data) {
+        const loaded = data.map((row) => row.data as DrawAction)
+        setActions(loaded)
+
+        // Restore personal undo stack from strokes that belong to this user
+        const myStrokes = loaded.filter((a) => a.userId === userIdRef.current)
+        myUndoStack.current = myStrokes
+        setCanUndo(myStrokes.length > 0)
+      }
+    }
+
+    loadStrokes()
+
+    // Subscribe to new strokes from other users
+    const channel = supabase
+      .channel(`room:${roomId}`, {
+        config: { presence: { key: userIdRef.current } },
+      })
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'strokes', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const incoming = payload.new.data as DrawAction
+          setActions((prev) => {
+            // skip if we already have this stroke locally
+            if (prev.find((a) => a.id === incoming.id)) return prev
+            return [...prev, incoming]
+          })
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'events', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const { type, data } = payload.new
+          if (type === 'clear') {
+            setActions([])
+            myUndoStack.current = []
+            myRedoStack.current = []
+            setCanUndo(false)
+            setCanRedo(false)
+          } else if (type === 'set_state') {
+            setActions(data.actions)
+          }
+        },
+      )
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState<{ x: number; y: number; userId: string }>()
+        const others = Object.values(state)
+          .flat()
+          .filter((c) => c.userId !== userIdRef.current)
+        setOtherCursors(others)
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        const typed = (
+          newPresences as unknown as { x: number; y: number; userId: string }[]
+        ).filter((c) => c.userId !== userIdRef.current)
+        setOtherCursors((prev) => {
+          const filtered = prev.filter((c) => !typed.find((p) => p.userId === c.userId))
+          return [...filtered, ...typed]
+        })
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        const typed = leftPresences as unknown as { userId: string }[]
+        setOtherCursors((prev) => prev.filter((c) => !typed.find((p) => p.userId === c.userId)))
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          isSubscribedRef.current = true
+          await channel.track({ x: 0, y: 0, userId: userIdRef.current })
+        }
+      })
+
+    channelRef.current = channel
+
+    return () => {
+      isSubscribedRef.current = false
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (channelRef.current && isSubscribedRef.current) {
+        // Convert screen coords to world coords
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const rect = canvas.getBoundingClientRect()
+        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+        const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+
+        channelRef.current.track({
+          x: worldX,
+          y: worldY,
+          userId: userIdRef.current,
+        })
+      }
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, []) // make sure this is empty array
+  const broadcastEvent = async (type: string, data?: any) => {
+    await supabase.from('events').insert({ room_id: roomId, type, data })
+  }
 
   return (
     <div className="flex flex-col h-screen bg-white overflow-hidden">
@@ -451,6 +631,13 @@ export const Whiteboard: React.FC = () => {
           strokeWidth="1"
           fill="none"
         />
+        {otherCursors.map((cursor: any) => {
+          const screenX = cursor.x * scaleRef.current + panRef.current.x
+          const screenY = cursor.y * scaleRef.current + panRef.current.y
+          return (
+            <circle key={cursor.userId} cx={screenX} cy={screenY} r="6" fill="blue" opacity={0.6} />
+          )
+        })}
       </svg>
 
       {/* Header toolbar */}
@@ -552,7 +739,7 @@ export const Whiteboard: React.FC = () => {
         <div className="flex items-center gap-1 px-3 border-r border-gray-200">
           <button
             onClick={undo}
-            disabled={history.length === 0}
+            disabled={!canUndo}
             title="Undo (⌘Z)"
             className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
           >
@@ -560,7 +747,7 @@ export const Whiteboard: React.FC = () => {
           </button>
           <button
             onClick={redo}
-            disabled={redoStack.length === 0}
+            disabled={!canRedo}
             title="Redo (⌘⇧Z)"
             className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
           >

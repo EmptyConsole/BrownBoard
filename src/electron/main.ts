@@ -1,10 +1,7 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// const __dirname = path.dirname(__filename);
+// __dirname is already available in CommonJS, no need to define it
 let mainWindow: BrowserWindow | null;
 
 function createWindow() {
@@ -13,11 +10,12 @@ function createWindow() {
     height: 800,
     webPreferences: {
       // preload is compiled to JS in dist-electron
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
     },
   });
+  
 
   const isDev = process.env.VITE_DEV_SERVER_URL;
   
