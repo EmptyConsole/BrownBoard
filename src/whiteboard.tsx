@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, use } from 'react';
 
 interface DrawAction {
     type: 'stroke' | 'erase';
@@ -221,17 +221,52 @@ export const Whiteboard: React.FC = () => {
     };
 
     const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!isDrawing || !currentAction) return;
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
-        const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
+    if (!isDrawing || !currentAction) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current;
+    const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current;
+
+    const startPoint = currentAction.points[0];
+
+    if (e.shiftKey) {
+        const dx = x - startPoint.x;
+    const dy = y - startPoint.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx); // radians
+
+    // Define snap angles (in degrees) — add/remove as needed
+    const snapDegrees = [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180, -157.5, -135, -112.5, -90, -67.5, -45, -22.5];
+    const snapRadians = snapDegrees.map(d => d * (Math.PI / 180));
+
+    // Find the closest snap angle
+    const nearest = snapRadians.reduce((prev, curr) =>
+        Math.abs(curr - angle) < Math.abs(prev - angle) ? curr : prev
+    );
+
+    const snappedPoint = {
+        x: startPoint.x + distance * Math.cos(nearest),
+        y: startPoint.y + distance * Math.sin(nearest),
+    };
+    setCurrentAction({
+        ...currentAction,
+        points: [startPoint, snappedPoint]
+    });
+    } else if (e.altKey) {
+        // Option/Alt: straight line from start to current mouse position
+        setCurrentAction({
+            ...currentAction,
+            points: [startPoint, { x, y }]
+        });
+    } else {
+        // Normal freehand drawing
         setCurrentAction({
             ...currentAction,
             points: [...currentAction.points, { x, y }]
         });
-    };
+    }
+};
 
     const stopDrawing = () => {
         if (currentAction) {
