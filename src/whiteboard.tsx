@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, use } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { Pen, Eraser, Trash2, Minus, Plus, Undo2, Redo2 } from 'lucide-react';
 
 interface DrawAction {
@@ -450,7 +450,7 @@ useEffect(() => {
 
             {/* Size group */}
             <div className="flex items-center gap-2 px-3 border-r border-gray-200">
-                <Minus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={(e)=>resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}/>
+                <Minus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={() => resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}/>
                 <input
                     type="range"
                     min="1"
@@ -460,7 +460,7 @@ useEffect(() => {
                     className="w-20 accent-gray-800"
                     title="Brush size"
                 />
-                <Plus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={(e)=>resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}/>
+                <Plus size={12} className="text-gray-400 hover:bg-gray-100 hover:text-gray-800" onClick={() => resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}/>
                 <span className="text-xs text-gray-400 w-5 text-right tabular-nums">{mouseSize}</span>
             </div>
 
