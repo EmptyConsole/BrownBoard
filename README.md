@@ -1,4 +1,9 @@
-Steps:
+# HUGE NOTES
+
+Use raster for whiteboard
+Use vectors for prototyping
+
+# Steps:
 
 # Initial WhiteBoard
 
@@ -24,6 +29,8 @@ Steps:
         Due Date
         Urgency
         Notes
+    Kanban style board
+    You should be able to link tasks to the whiteboard
 
 # Between Account Projects
 
