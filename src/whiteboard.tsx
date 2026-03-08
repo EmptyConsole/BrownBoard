@@ -275,9 +275,11 @@ export const Whiteboard: React.FC = () => {
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
+
     const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-
+    console.log('drawing world:', x, y)
+    console.log('rect.top in draw:', rect.top)
     const startPoint = currentAction.points[0]
 
     if (e.shiftKey) {
@@ -452,7 +454,24 @@ export const Whiteboard: React.FC = () => {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-
+    const handleMouseMove = (e: MouseEvent) => {
+      if (channelRef.current && isSubscribedRef.current) {
+        // Convert screen coords to world coords
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const rect = canvas.getBoundingClientRect()
+        console.log('rect.top in mousemove:', rect.top)
+        console.log('rect.left in mousemove:', rect.left)
+        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+        const worldY = (e.clientY - -rect.top - panRef.current.y) / scaleRef.current
+        console.log('tracking world:', worldX, worldY)
+        channelRef.current.track({
+          x: worldX,
+          y: worldY,
+          userId: userIdRef.current,
+        })
+      }
+    }
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault()
       if (e.touches.length === 2) {
@@ -489,10 +508,12 @@ export const Whiteboard: React.FC = () => {
       }
       updatePan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY)
     }
+    window.addEventListener('mousemove', handleMouseMove)
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false })
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false })
     canvas.addEventListener('wheel', handleWheelPan, { passive: false })
     return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
       canvas.removeEventListener('touchmove', handleTouchMove)
       canvas.removeEventListener('touchstart', handleTouchStart)
       canvas.removeEventListener('wheel', handleWheelPan)
@@ -600,27 +621,7 @@ export const Whiteboard: React.FC = () => {
     }
   }, [])
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (channelRef.current && isSubscribedRef.current) {
-        // Convert screen coords to world coords
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-        const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-
-        channelRef.current.track({
-          x: worldX,
-          y: worldY,
-          userId: userIdRef.current,
-        })
-      }
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    return () => window.removeEventListener('mousemove', handleMouseMove)
-  }, []) // make sure this is empty array
+  //   useEffect(() => {}, []) // make sure this is empty array
   const broadcastEvent = async (type: string, data?: any) => {
     await supabase.from('events').insert({ room_id: roomId, type, data })
   }
@@ -642,12 +643,24 @@ export const Whiteboard: React.FC = () => {
           strokeWidth="1"
           fill="none"
         />
-        {otherCursors.map((cursor: any) => {
-          const { x: screenX, y: screenY } = worldToScreen(cursor.x, cursor.y)
-          return (
-            <circle key={cursor.userId} cx={screenX} cy={screenY} r="6" fill="blue" opacity={0.6} />
-          )
-        })}
+        {otherCursors
+          .filter((c) => c.x !== -1)
+          .map((cursor: any) => {
+            const canvas = canvasRef.current
+            const rect = canvas?.getBoundingClientRect()
+            const screenX = cursor.x * scaleRef.current + panRef.current.x + (rect?.left ?? 0)
+            const screenY = cursor.y * scaleRef.current + panRef.current.y + (rect?.top ?? 0)
+            return (
+              <circle
+                key={cursor.userId}
+                cx={screenX}
+                cy={screenY}
+                r="6"
+                fill="blue"
+                opacity={0.6}
+              />
+            )
+          })}
       </svg>
 
       {/* Header toolbar */}
