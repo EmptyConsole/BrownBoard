@@ -114,6 +114,17 @@ export const Whiteboard: React.FC = () => {
 
   const clampScale = (value: number) => Math.max(0.25, Math.min(4, value))
 
+  // Convert world coordinates (stored in Supabase presence) to screen coordinates used by the SVG overlay.
+  const worldToScreen = (worldX: number, worldY: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: worldX * scaleRef.current + panRef.current.x + rect.left,
+      y: worldY * scaleRef.current + panRef.current.y + rect.top,
+    }
+  }
+
   // Zoom keeping the whiteboard content under the focal point stationary.
   const zoomAtPoint = (factor: number, clientX: number, clientY: number) => {
     const canvas = canvasRef.current
@@ -632,8 +643,7 @@ export const Whiteboard: React.FC = () => {
           fill="none"
         />
         {otherCursors.map((cursor: any) => {
-          const screenX = cursor.x * scaleRef.current + panRef.current.x
-          const screenY = cursor.y * scaleRef.current + panRef.current.y
+          const { x: screenX, y: screenY } = worldToScreen(cursor.x, cursor.y)
           return (
             <circle key={cursor.userId} cx={screenX} cy={screenY} r="6" fill="blue" opacity={0.6} />
           )
