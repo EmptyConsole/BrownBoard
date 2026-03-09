@@ -21,6 +21,10 @@ Use vectors for prototyping
     IF YOU HOLD OPTION - Done
         stright line from mouse to start - Done
 
+    GUYS NEW STUFF
+        IN SETTING
+        you need to be able to choose header color
+
 # Project Management
 
     Backlog

@@ -880,7 +880,7 @@ export const Whiteboard: React.FC = () => {
           transform: `scale(${hudScale})`,
           transformOrigin: 'top center',
           backgroundColor:
-            colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customToolbar : 'white',
+            colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customBg : 'white',
           borderColor: colorScheme === 'dark' ? '#333' : undefined,
           color: colorScheme === 'dark' ? 'white' : undefined,
         }}
