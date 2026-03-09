@@ -100,9 +100,7 @@ export const Whiteboard: React.FC = () => {
   const [snapToGrid, setSnapToGrid] = useState(false)
   const [customBg, setCustomBg] = useState('#ffffff')
   const [customToolbar] = useState('#f9fafb')
-  const [shapeKind, setShapeKind] = useState<'rectangle' | 'circle' | 'star' | 'heart'>(
-    'rectangle',
-  )
+  const [shapeKind, setShapeKind] = useState<'rectangle' | 'circle' | 'star' | 'heart'>('rectangle')
   const [shapeFillMode, setShapeFillMode] = useState<'outline' | 'fill'>('outline')
   const [showShapePanel, setShowShapePanel] = useState(false)
   const shapeHoverTimeout = useRef<number | null>(null)
@@ -460,7 +458,10 @@ export const Whiteboard: React.FC = () => {
       setCurrentAction({
         ...base,
         type: 'shape',
-        points: [{ x, y }, { x, y }],
+        points: [
+          { x, y },
+          { x, y },
+        ],
         shapeKind,
         shapeFill: shapeFillMode,
       })
@@ -844,7 +845,9 @@ export const Whiteboard: React.FC = () => {
             cx={cursorPos.x}
             cy={cursorPos.y}
             r={cursorStyle === 'dot' ? 2 : 5}
-            stroke={cursorStyle === 'crosshair' ? 'none' : 'black'}
+            stroke={
+              cursorStyle === 'crosshair' ? 'none' : colorScheme === 'dark' ? 'white' : 'black'
+            }
             strokeWidth="1"
             fill={cursorStyle === 'dot' ? 'black' : 'none'}
           />
