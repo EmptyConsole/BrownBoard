@@ -16,22 +16,6 @@ interface DrawAction {
 
 /**
  * Whiteboard component for drawing and erasing on a canvas.
- *const handleMouseMove = (e: MouseEvent) => {
-    if (channelRef.current && isSubscribedRef.current) {
-        // Convert screen coords to world coords
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-        const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-
-        channelRef.current.track({
-            x: worldX,
-            y: worldY,
-            userId: userIdRef.current,
-        })
-    }
-}
  * Provides a drawing interface with:
  * - Pen tool for drawing strokes
  * - Eraser tool for removing content
@@ -278,10 +262,7 @@ export const Whiteboard: React.FC = () => {
 
     const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-    console.log('drawing world:', x, y)
-    console.log('rect.top in draw:', rect.top)
     const startPoint = currentAction.points[0]
-
     if (e.shiftKey) {
       const dx = x - startPoint.x
       const dy = y - startPoint.y
@@ -454,24 +435,6 @@ export const Whiteboard: React.FC = () => {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const handleMouseMove = (e: MouseEvent) => {
-      if (channelRef.current && isSubscribedRef.current) {
-        // Convert screen coords to world coords
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-        console.log('rect.top in mousemove:', rect.top)
-        console.log('rect.left in mousemove:', rect.left)
-        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-        const worldY = (e.clientY - -rect.top - panRef.current.y) / scaleRef.current
-        console.log('tracking world:', worldX, worldY)
-        channelRef.current.track({
-          x: worldX,
-          y: worldY,
-          userId: userIdRef.current,
-        })
-      }
-    }
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault()
       if (e.touches.length === 2) {
@@ -508,12 +471,10 @@ export const Whiteboard: React.FC = () => {
       }
       updatePan(panRef.current.x - e.deltaX, panRef.current.y - e.deltaY)
     }
-    window.addEventListener('mousemove', handleMouseMove)
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false })
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false })
     canvas.addEventListener('wheel', handleWheelPan, { passive: false })
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
       canvas.removeEventListener('touchmove', handleTouchMove)
       canvas.removeEventListener('touchstart', handleTouchStart)
       canvas.removeEventListener('wheel', handleWheelPan)
@@ -800,9 +761,24 @@ export const Whiteboard: React.FC = () => {
         }}
         onMouseMove={(e) => {
           cursorTargetRef.current = { x: e.clientX, y: e.clientY }
+
+          // Track cursor for collaboration
+          if (channelRef.current && isSubscribedRef.current) {
+            const rect = canvasRef.current?.getBoundingClientRect()
+            if (rect) {
+              const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+              const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+              channelRef.current.track({
+                x: worldX,
+                y: worldY,
+                userId: userIdRef.current,
+              })
+            }
+          }
+
           if (isPanning) {
             handleCanvasPan(e, false)
-          } else if (e.button === 0) {
+          } else if (e.buttons === 1) {
             draw(e)
           }
         }}
