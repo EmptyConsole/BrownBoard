@@ -1,5 +1,16 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { Pen, Eraser, Trash2, Minus, Plus, Undo2, Redo2, Settings } from 'lucide-react'
+import {
+  Pen,
+  Eraser,
+  Trash2,
+  Minus,
+  Plus,
+  Undo2,
+  Redo2,
+  Settings,
+  X,
+  MousePointer2,
+} from 'lucide-react'
 import { HexColorPicker } from 'react-colorful'
 import { supabase } from './lib/supabase'
 
@@ -32,7 +43,7 @@ interface DrawAction {
 export const Whiteboard: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
-  const [tool, setTool] = useState<'pen' | 'eraser'>('pen')
+  const [tool, setTool] = useState<'pen' | 'eraser' | 'select'>('pen')
   const [actions, setActions] = useState<DrawAction[]>([])
   const [currentAction, setCurrentAction] = useState<DrawAction | null>(null)
   const [mouseSize, setMouseSize] = useState(10)
@@ -71,6 +82,18 @@ export const Whiteboard: React.FC = () => {
   const userIdRef = useRef<string>(crypto.randomUUID())
   const isSubscribedRef = useRef(false)
   const channelRef = useRef<any>(null)
+  const myClearStack = useRef<DrawAction[][]>([])
+
+  //SETTINGS
+  const [showSettings, setShowSettings] = useState(false)
+  const [colorScheme, setColorScheme] = useState<'light' | 'dark' | 'custom'>('light')
+  const [hudSize, setHudSize] = useState<'small' | 'medium' | 'large'>('medium')
+  const [cursorStyle, setCursorStyle] = useState<'circle' | 'dot' | 'crosshair'>('circle')
+  const [showGrid, setShowGrid] = useState(false)
+  const [gridSize, setGridSize] = useState(50)
+  const [snapToGrid, setSnapToGrid] = useState(false)
+  const [customBg, setCustomBg] = useState('#ffffff')
+  const [customToolbar, setCustomToolbar] = useState('#f9fafb')
 
   const updatePan = (x: number, y: number) => {
     panRef.current = { x, y }
@@ -99,15 +122,15 @@ export const Whiteboard: React.FC = () => {
   const clampScale = (value: number) => Math.max(0.25, Math.min(4, value))
 
   // Convert world coordinates (stored in Supabase presence) to screen coordinates used by the SVG overlay.
-  const worldToScreen = (worldX: number, worldY: number) => {
-    const canvas = canvasRef.current
-    if (!canvas) return { x: 0, y: 0 }
-    const rect = canvas.getBoundingClientRect()
-    return {
-      x: worldX * scaleRef.current + panRef.current.x + rect.left,
-      y: worldY * scaleRef.current + panRef.current.y + rect.top,
-    }
-  }
+  //   const worldToScreen = (worldX: number, worldY: number) => {
+  //     const canvas = canvasRef.current
+  //     if (!canvas) return { x: 0, y: 0 }
+  //     const rect = canvas.getBoundingClientRect()
+  //     return {
+  //       x: worldX * scaleRef.current + panRef.current.x + rect.left,
+  //       y: worldY * scaleRef.current + panRef.current.y + rect.top,
+  //     }
+  //   }
 
   // Zoom keeping the whiteboard content under the focal point stationary.
   const zoomAtPoint = (factor: number, clientX: number, clientY: number) => {
@@ -154,68 +177,106 @@ export const Whiteboard: React.FC = () => {
   const redraw = () => {
     const canvas = canvasRef.current
     if (!canvas) return
+    if (canvasSize.width === 0 || canvasSize.height === 0) return // add this
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // make sure the element attributes match our stored size; setting
-    // width/height clears the bitmap but we immediately redraw below
     canvas.width = canvasSize.width
     canvas.height = canvasSize.height
 
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.lineWidth = 2
 
-    // white background
-    ctx.fillStyle = 'white'
+    // 1. background
+    ctx.fillStyle =
+      colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customBg : 'white'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // draw saved actions
-    ctx.save()
-    ctx.translate(panX, panY)
-    ctx.scale(scale, scale)
-    for (const action of actions) {
-      if (action.drawing) {
-        if (action.type === 'stroke') {
-          ctx.globalCompositeOperation = 'source-over'
-          ctx.strokeStyle = action.drawColor || drawColor
-        } else if (action.type === 'erase') {
-          ctx.globalCompositeOperation = 'destination-out'
-        }
-        ctx.lineWidth = action.lineWidth || mouseSize
+    // 2. grid
+    if (showGrid) {
+      ctx.save()
+      ctx.translate(panX, panY)
+      ctx.scale(scale, scale)
+      ctx.strokeStyle =
+        colorScheme === 'dark'
+          ? 'rgba(255,255,255,0.1)'
+          : colorScheme === 'custom' || colorScheme === 'light'
+            ? 'rgba(0, 0, 0, 0.2)'
+            : 'rgba(0,0,0,0.2)'
+      ctx.lineWidth = 1 / scale
+      const startX = -panX / scale
+      const startY = -panY / scale
+      const endX = startX + canvas.width / scale
+      const endY = startY + canvas.height / scale
+      const snappedStartX = Math.floor(startX / gridSize) * gridSize
+      const snappedStartY = Math.floor(startY / gridSize) * gridSize
+      for (let x = snappedStartX; x < endX; x += gridSize) {
         ctx.beginPath()
-        ctx.moveTo(action.points[0].x, action.points[0].y)
-        for (let i = 1; i < action.points.length; i++) {
-          ctx.lineTo(action.points[i].x, action.points[i].y)
-        }
+        ctx.moveTo(x, startY)
+        ctx.lineTo(x, endY)
         ctx.stroke()
       }
+      for (let y = snappedStartY; y < endY; y += gridSize) {
+        ctx.beginPath()
+        ctx.moveTo(startX, y)
+        ctx.lineTo(endX, y)
+        ctx.stroke()
+      }
+      ctx.restore()
     }
 
-    // draw current action
-    if (currentAction && currentAction.drawing) {
-      if (currentAction.type === 'stroke') {
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.strokeStyle = currentAction.drawColor || drawColor
-      } else if (currentAction.type === 'erase') {
-        ctx.globalCompositeOperation = 'destination-out'
+    // 3. draw strokes onto offscreen canvas so destination-out only affects strokes layer
+    const offscreen = document.createElement('canvas')
+    offscreen.width = canvas.width
+    offscreen.height = canvas.height
+    const offCtx = offscreen.getContext('2d')!
+    offCtx.lineCap = 'round'
+    offCtx.lineJoin = 'round'
+
+    const drawActionToCtx = (action: DrawAction, c: CanvasRenderingContext2D) => {
+      if (!action.drawing || action.points.length < 1) return
+      if (action.type === 'stroke') {
+        c.globalCompositeOperation = 'source-over'
+        c.strokeStyle = action.drawColor || drawColor
+      } else {
+        c.globalCompositeOperation = 'destination-out'
+        c.strokeStyle = 'rgba(0,0,0,1)'
       }
-      ctx.strokeStyle = currentAction.drawColor || drawColor
-      ctx.lineWidth = currentAction.lineWidth || mouseSize
-      ctx.beginPath()
-      ctx.moveTo(currentAction.points[0].x, currentAction.points[0].y)
-      for (let i = 1; i < currentAction.points.length; i++) {
-        ctx.lineTo(currentAction.points[i].x, currentAction.points[i].y)
+      c.lineWidth = action.lineWidth || mouseSize
+      c.save()
+      c.translate(panX, panY)
+      c.scale(scale, scale)
+      c.beginPath()
+      c.moveTo(action.points[0].x, action.points[0].y)
+      for (let i = 1; i < action.points.length; i++) {
+        c.lineTo(action.points[i].x, action.points[i].y)
       }
-      ctx.stroke()
+      c.stroke()
+      c.restore()
     }
-    ctx.restore()
+
+    for (const action of actions) drawActionToCtx(action, offCtx)
+    if (currentAction) drawActionToCtx(currentAction, offCtx)
+
+    // 4. composite strokes layer on top
+    ctx.drawImage(offscreen, 0, 0)
   }
 
   // effect drives redraw whenever relevant state changes
   useEffect(() => {
     redraw()
-  }, [actions, currentAction, panX, panY, canvasSize, scale])
+  }, [
+    actions,
+    currentAction,
+    panX,
+    panY,
+    canvasSize,
+    scale,
+    showGrid,
+    gridSize,
+    colorScheme,
+    customBg,
+  ])
 
   // resize listener that updates canvasSize from the element’s
   // client dimensions.  clientWidth/Height reflect the size of the
@@ -254,6 +315,14 @@ export const Whiteboard: React.FC = () => {
     })
   }
 
+  const snapPoint = (x: number, y: number) => {
+    if (!snapToGrid) return { x, y }
+    return {
+      x: Math.round(x / gridSize) * gridSize,
+      y: Math.round(y / gridSize) * gridSize,
+    }
+  }
+
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !currentAction) return
     const canvas = canvasRef.current
@@ -262,10 +331,11 @@ export const Whiteboard: React.FC = () => {
 
     const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+    const { x: sx, y: sy } = snapPoint(x, y)
     const startPoint = currentAction.points[0]
     if (e.shiftKey) {
-      const dx = x - startPoint.x
-      const dy = y - startPoint.y
+      const dx = sx - startPoint.x
+      const dy = sy - startPoint.y
       const distance = Math.sqrt(dx * dx + dy * dy)
       const angle = Math.atan2(dy, dx) // radians
 
@@ -292,13 +362,13 @@ export const Whiteboard: React.FC = () => {
       // Option/Alt: straight line from start to current mouse position
       setCurrentAction({
         ...currentAction,
-        points: [startPoint, { x, y }],
+        points: [startPoint, { x: sx, y: sy }],
       })
     } else {
       // Normal freehand drawing
       setCurrentAction({
         ...currentAction,
-        points: [...currentAction.points, { x, y }],
+        points: [...currentAction.points, { x: sx, y: sy }],
       })
     }
   }
@@ -376,7 +446,7 @@ export const Whiteboard: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [undo, redo])
-  const myClearStack = useRef<DrawAction[][]>([])
+
   const clearCanvas = () => {
     myClearStack.current.push([...actions]) // save full state
     myUndoStack.current = []
@@ -587,23 +657,30 @@ export const Whiteboard: React.FC = () => {
     await supabase.from('events').insert({ room_id: roomId, type, data })
   }
 
+  const hudScale = hudSize === 'small' ? 0.85 : hudSize === 'large' ? 1.15 : 1
+
   return (
-    <div className="flex flex-col h-screen bg-white overflow-hidden">
+    <div
+      className="flex flex-col h-screen overflow-hidden"
+      style={{ backgroundColor: colorScheme === 'dark' ? '#1a1a1a' : 'white' }}
+    >
       <svg
         width="100%"
         height="100%"
         className="absolute top-0 left-0 pointer-events-none"
         style={{ zIndex: 10 }}
       >
-        <circle
-          id="mouseSizeCircle"
-          cx={cursorPos.x}
-          cy={cursorPos.y}
-          r="5"
-          stroke="black"
-          strokeWidth="1"
-          fill="none"
-        />
+        {tool !== 'select' && (
+          <circle
+            id="mouseSizeCircle"
+            cx={cursorPos.x}
+            cy={cursorPos.y}
+            r={cursorStyle === 'dot' ? 2 : 5}
+            stroke={cursorStyle === 'crosshair' ? 'none' : 'black'}
+            strokeWidth="1"
+            fill={cursorStyle === 'dot' ? 'black' : 'none'}
+          />
+        )}
         {otherCursors
           .filter((c) => c.x !== -1)
           .map((cursor: any) => {
@@ -626,11 +703,30 @@ export const Whiteboard: React.FC = () => {
 
       {/* Header toolbar */}
       <div
-        className="flex items-center justify-center gap-1 px-3 py-2 bg-white border-b border-gray-100 shadow-sm select-none"
-        style={{ zIndex: 5 }}
+        className="flex items-center justify-center gap-1 px-3 py-2 border-b shadow-sm select-none"
+        style={{
+          zIndex: 5,
+          transform: `scale(${hudScale})`,
+          transformOrigin: 'top center',
+          backgroundColor:
+            colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customToolbar : 'white',
+          borderColor: colorScheme === 'dark' ? '#333' : undefined,
+          color: colorScheme === 'dark' ? 'white' : undefined,
+        }}
       >
         {/* Tool group */}
         <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
+          <button
+            onClick={() => setTool('select')}
+            title="Select (V)"
+            className={`p-2 rounded-lg transition-all duration-150 ${
+              tool === 'select'
+                ? 'bg-gray-900 text-white shadow-sm'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+            }`}
+          >
+            <MousePointer2 size={16} strokeWidth={2} />
+          </button>
           <button
             onClick={() => setTool('pen')}
             title="Pen (P)"
@@ -642,6 +738,7 @@ export const Whiteboard: React.FC = () => {
           >
             <Pen size={16} strokeWidth={2} />
           </button>
+
           <button
             onClick={() => setTool('eraser')}
             title="Eraser (E)"
@@ -740,7 +837,7 @@ export const Whiteboard: React.FC = () => {
         </div>
         <div className="flex items-center top-2 right-4">
           <button
-            onClick={() => alert('Settings dialog not implemented yet.')}
+            onClick={() => setShowSettings(true)}
             title="Settings"
             className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all duration-150"
           >
@@ -751,7 +848,12 @@ export const Whiteboard: React.FC = () => {
 
       <canvas
         ref={canvasRef}
-        style={{ width: '100%', height: '100%', touchAction: 'none' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          touchAction: 'none',
+          cursor: tool === 'select' ? 'none' : cursorStyle === 'crosshair' ? 'crosshair' : 'none',
+        }}
         onMouseDown={(e) => {
           if (e.button === 2) {
             handleCanvasPan(e, true)
@@ -794,6 +896,146 @@ export const Whiteboard: React.FC = () => {
         }}
         className="flex-1 cursor-crosshair bg-white"
       />
+      {tool === 'select' && (
+        <div
+          style={{
+            position: 'fixed',
+            top: cursorPos.y,
+            left: cursorPos.x,
+            // Centers the icon precisely on the cursor tip
+            transform: 'translate(-10%, -10%)',
+            pointerEvents: 'none', // Allows clicks to pass through the custom cursor
+            zIndex: 1000,
+          }}
+        >
+          <MousePointer2 size={24} color={colorScheme === 'dark' ? 'white' : 'black'} />{' '}
+          {/* Customize size and color */}
+        </div>
+      )}
+      {showSettings && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setShowSettings(false)} />
+          <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
+            <div className="bg-white rounded-2xl shadow-2xl w-96 p-6 pointer-events-auto flex flex-col gap-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-800">Settings</h2>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Color Scheme */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Color Scheme
+                </label>
+                <div className="flex gap-2">
+                  {(['light', 'dark', 'custom'] as const).map((scheme) => (
+                    <button
+                      key={scheme}
+                      onClick={() => setColorScheme(scheme)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs capitalize transition-all ${colorScheme === scheme ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {scheme}
+                    </button>
+                  ))}
+                </div>
+                {colorScheme === 'custom' && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-gray-500">Background</span>
+                    <input
+                      type="color"
+                      value={customBg}
+                      onChange={(e) => setCustomBg(e.target.value)}
+                      className="w-8 h-8 rounded cursor-pointer border-0"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* HUD Size */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  HUD Size
+                </label>
+                <div className="flex gap-2">
+                  {(['small', 'medium', 'large'] as const).map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => setHudSize(size)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs capitalize transition-all ${hudSize === size ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cursor Style */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Cursor Style
+                </label>
+                <div className="flex gap-2">
+                  {(['circle', 'dot', 'crosshair'] as const).map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => setCursorStyle(style)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs capitalize transition-all ${cursorStyle === style ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {style}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Grid */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Grid
+                </label>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">Show grid</span>
+                  <button
+                    onClick={() => setShowGrid(!showGrid)}
+                    className={`w-10 h-5 rounded-full transition-all ${showGrid ? 'bg-gray-900' : 'bg-gray-200'}`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transition-all mx-0.5 ${showGrid ? 'translate-x-5' : 'translate-x-0'}`}
+                    />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">Snap to grid</span>
+                  <button
+                    onClick={() => setSnapToGrid(!snapToGrid)}
+                    className={`w-10 h-5 rounded-full transition-all ${snapToGrid ? 'bg-gray-900' : 'bg-gray-200'}`}
+                  >
+                    <div
+                      className={`w-4 h-4 bg-white rounded-full shadow transition-all mx-0.5 ${snapToGrid ? 'translate-x-5' : 'translate-x-0'}`}
+                    />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600">Grid size</span>
+                  <input
+                    type="range"
+                    min="10"
+                    max="200"
+                    value={gridSize}
+                    onChange={(e) => setGridSize(parseInt(e.target.value))}
+                    className="flex-1 accent-gray-800"
+                  />
+                  <span className="text-xs text-gray-400 w-8 text-right">{gridSize}px</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
