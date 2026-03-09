@@ -39,7 +39,6 @@ Use vectors for prototyping
 # Whiteboard Expansion
 
     Shapes
-    Undo/Redo
     Import image
 
 # Display Tab System

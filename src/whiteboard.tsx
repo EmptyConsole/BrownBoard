@@ -10,19 +10,25 @@ import {
   Settings,
   X,
   MousePointer2,
+  Square,
+  Circle,
+  Star,
+  Heart,
 } from 'lucide-react'
 import { HexColorPicker } from 'react-colorful'
 import { supabase } from './lib/supabase'
 
 interface DrawAction {
   id?: string
-  type: 'stroke' | 'erase'
+  type: 'stroke' | 'erase' | 'shape'
   userId?: string
   drawing: true | false
   points: { x: number; y: number }[]
   lineWidth?: number
   eraseRadius?: number
   drawColor?: string
+  shapeKind?: 'rectangle' | 'circle' | 'star' | 'heart'
+  shapeFill?: 'outline' | 'fill'
 }
 
 /**
@@ -43,7 +49,7 @@ interface DrawAction {
 export const Whiteboard: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
-  const [tool, setTool] = useState<'pen' | 'eraser' | 'select'>('pen')
+  const [tool, setTool] = useState<'pen' | 'eraser' | 'select' | 'shape'>('pen')
   const [actions, setActions] = useState<DrawAction[]>([])
   const [currentAction, setCurrentAction] = useState<DrawAction | null>(null)
   const [mouseSize, setMouseSize] = useState(10)
@@ -93,13 +99,67 @@ export const Whiteboard: React.FC = () => {
   const [gridSize, setGridSize] = useState(50)
   const [snapToGrid, setSnapToGrid] = useState(false)
   const [customBg, setCustomBg] = useState('#ffffff')
-  const [customToolbar, setCustomToolbar] = useState('#f9fafb')
+  const [customToolbar] = useState('#f9fafb')
+  const [shapeKind, setShapeKind] = useState<'rectangle' | 'circle' | 'star' | 'heart'>(
+    'rectangle',
+  )
+  const [shapeFillMode, setShapeFillMode] = useState<'outline' | 'fill'>('outline')
+  const [showShapePanel, setShowShapePanel] = useState(false)
+  const shapeHoverTimeout = useRef<number | null>(null)
+  const [hideCursorWhileHudClick, setHideCursorWhileHudClick] = useState(false)
+  const [hideCursorWhileHudHover, setHideCursorWhileHudHover] = useState(false)
+  const prevBodyCursor = useRef<string>('')
+
+  const shapeIcons: Record<
+    typeof shapeKind,
+    React.ComponentType<{ size?: number; strokeWidth?: number }>
+  > = {
+    rectangle: Square,
+    circle: Circle,
+    star: Star,
+    heart: Heart,
+  }
 
   const updatePan = (x: number, y: number) => {
     panRef.current = { x, y }
     setPanX(x)
     setPanY(y)
   }
+
+  const openShapePanel = () => {
+    if (shapeHoverTimeout.current) {
+      clearTimeout(shapeHoverTimeout.current)
+      shapeHoverTimeout.current = null
+    }
+    setShowShapePanel(true)
+  }
+
+  const closeShapePanel = () => {
+    if (shapeHoverTimeout.current) clearTimeout(shapeHoverTimeout.current)
+    shapeHoverTimeout.current = window.setTimeout(() => {
+      setShowShapePanel(false)
+      shapeHoverTimeout.current = null
+    }, 120)
+  }
+
+  // Hide custom cursor while clicking toolbar/popup; re-show on mouseup anywhere.
+  useEffect(() => {
+    const handleMouseUp = () => setHideCursorWhileHudClick(false)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => window.removeEventListener('mouseup', handleMouseUp)
+  }, [])
+
+  useEffect(() => {
+    if (hideCursorWhileHudClick) {
+      prevBodyCursor.current = document.body.style.cursor
+      document.body.style.cursor = 'none'
+    } else {
+      document.body.style.cursor = prevBodyCursor.current
+    }
+    return () => {
+      document.body.style.cursor = prevBodyCursor.current
+    }
+  }, [hideCursorWhileHudClick])
 
   const handleCanvasPan = (
     e: React.MouseEvent<HTMLCanvasElement> | MouseEvent,
@@ -233,8 +293,96 @@ export const Whiteboard: React.FC = () => {
     offCtx.lineCap = 'round'
     offCtx.lineJoin = 'round'
 
+    const drawShapePath = (c: CanvasRenderingContext2D, action: DrawAction) => {
+      if (!action.points || action.points.length < 2) return
+      const [start, end] = action.points
+      const width = end.x - start.x
+      const height = end.y - start.y
+      const centerX = start.x + width / 2
+      const centerY = start.y + height / 2
+      const absW = Math.abs(width)
+      const absH = Math.abs(height)
+      c.beginPath()
+
+      switch (action.shapeKind) {
+        case 'rectangle': {
+          const x = Math.min(start.x, end.x)
+          const y = Math.min(start.y, end.y)
+          c.rect(x, y, absW, absH)
+          break
+        }
+        case 'circle': {
+          const radiusX = absW / 2
+          const radiusY = absH / 2
+          c.ellipse(centerX, centerY, Math.max(radiusX, 1), Math.max(radiusY, 1), 0, 0, Math.PI * 2)
+          break
+        }
+        case 'star': {
+          const spikes = 5
+          const outerRadius = Math.max(absW, absH) / 2 || 1
+          const innerRadius = outerRadius * 0.5
+          for (let i = 0; i < spikes * 2; i++) {
+            const angle = (Math.PI / spikes) * i
+            const radius = i % 2 === 0 ? outerRadius : innerRadius
+            const x = centerX + Math.cos(angle - Math.PI / 2) * radius
+            const y = centerY + Math.sin(angle - Math.PI / 2) * radius
+            i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
+          }
+          c.closePath()
+          break
+        }
+        case 'heart': {
+          const scaleX = absW / 2 || 1
+          const scaleY = absH / 2 || 1
+          // Start at bottom tip
+          c.moveTo(centerX, centerY + scaleY * 0.9)
+          // Right lobe
+          c.bezierCurveTo(
+            centerX + scaleX,
+            centerY + scaleY * 0.7,
+            centerX + scaleX * 0.9,
+            centerY - scaleY * 0.2,
+            centerX,
+            centerY + scaleY * 0.25, // deeper dip between lobes
+          )
+          // Left lobe
+          c.bezierCurveTo(
+            centerX - scaleX * 0.9,
+            centerY - scaleY * 0.2,
+            centerX - scaleX,
+            centerY + scaleY * 0.7,
+            centerX,
+            centerY + scaleY * 0.9,
+          )
+          c.closePath()
+          break
+        }
+        default:
+          break
+      }
+    }
+
     const drawActionToCtx = (action: DrawAction, c: CanvasRenderingContext2D) => {
       if (!action.drawing || action.points.length < 1) return
+      c.save()
+      c.translate(panX, panY)
+      c.scale(scale, scale)
+
+      if (action.type === 'shape') {
+        c.globalCompositeOperation = 'source-over'
+        c.lineWidth = action.lineWidth || mouseSize
+        c.strokeStyle = action.drawColor || drawColor
+        c.fillStyle = action.drawColor || drawColor
+        drawShapePath(c, action)
+        if (action.shapeFill === 'fill') {
+          c.fill()
+        } else {
+          c.stroke()
+        }
+        c.restore()
+        return
+      }
+
       if (action.type === 'stroke') {
         c.globalCompositeOperation = 'source-over'
         c.strokeStyle = action.drawColor || drawColor
@@ -243,9 +391,6 @@ export const Whiteboard: React.FC = () => {
         c.strokeStyle = 'rgba(0,0,0,1)'
       }
       c.lineWidth = action.lineWidth || mouseSize
-      c.save()
-      c.translate(panX, panY)
-      c.scale(scale, scale)
       c.beginPath()
       c.moveTo(action.points[0].x, action.points[0].y)
       for (let i = 1; i < action.points.length; i++) {
@@ -303,16 +448,31 @@ export const Whiteboard: React.FC = () => {
     const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
     setIsDrawing(true)
-    setCurrentAction({
+    const base = {
       id: crypto.randomUUID(),
       userId: userIdRef.current,
-      type: tool === 'pen' ? 'stroke' : 'erase',
-      drawing: true,
-      points: [{ x, y }],
+      drawing: true as const,
       lineWidth: mouseSize,
-      eraseRadius: undefined,
-      drawColor: tool === 'pen' ? drawColor : undefined,
-    })
+      drawColor,
+    }
+
+    if (tool === 'shape') {
+      setCurrentAction({
+        ...base,
+        type: 'shape',
+        points: [{ x, y }, { x, y }],
+        shapeKind,
+        shapeFill: shapeFillMode,
+      })
+    } else {
+      setCurrentAction({
+        ...base,
+        type: tool === 'pen' ? 'stroke' : 'erase',
+        points: [{ x, y }],
+        eraseRadius: undefined,
+        drawColor: tool === 'pen' ? drawColor : undefined,
+      })
+    }
   }
 
   const snapPoint = (x: number, y: number) => {
@@ -333,6 +493,14 @@ export const Whiteboard: React.FC = () => {
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
     const { x: sx, y: sy } = snapPoint(x, y)
     const startPoint = currentAction.points[0]
+    if (currentAction.type === 'shape') {
+      setCurrentAction({
+        ...currentAction,
+        points: [currentAction.points[0], { x: sx, y: sy }],
+      })
+      return
+    }
+
     if (e.shiftKey) {
       const dx = sx - startPoint.x
       const dy = sy - startPoint.y
@@ -670,7 +838,7 @@ export const Whiteboard: React.FC = () => {
         className="absolute top-0 left-0 pointer-events-none"
         style={{ zIndex: 10 }}
       >
-        {tool !== 'select' && (
+        {tool !== 'select' && !hideCursorWhileHudClick && !hideCursorWhileHudHover && (
           <circle
             id="mouseSizeCircle"
             cx={cursorPos.x}
@@ -703,7 +871,7 @@ export const Whiteboard: React.FC = () => {
 
       {/* Header toolbar */}
       <div
-        className="flex items-center justify-center gap-1 px-3 py-2 border-b shadow-sm select-none"
+        className={`flex items-center justify-center gap-1 px-3 py-2 border-b shadow-sm select-none ${hideCursorWhileHudClick ? 'cursor-none' : ''}`}
         style={{
           zIndex: 5,
           transform: `scale(${hudScale})`,
@@ -713,6 +881,9 @@ export const Whiteboard: React.FC = () => {
           borderColor: colorScheme === 'dark' ? '#333' : undefined,
           color: colorScheme === 'dark' ? 'white' : undefined,
         }}
+        onMouseEnter={() => setHideCursorWhileHudHover(true)}
+        onMouseLeave={() => setHideCursorWhileHudHover(false)}
+        onMouseDown={() => setHideCursorWhileHudClick(true)}
       >
         {/* Tool group */}
         <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
@@ -750,6 +921,84 @@ export const Whiteboard: React.FC = () => {
           >
             <Eraser size={16} strokeWidth={2} />
           </button>
+        </div>
+
+        {/* Shapes */}
+        <div
+          className="relative flex items-center px-2 border-r border-gray-200"
+          onMouseEnter={openShapePanel}
+          onMouseLeave={closeShapePanel}
+          onMouseDown={() => setHideCursorWhileHudClick(true)}
+          onMouseOver={() => setHideCursorWhileHudHover(true)}
+          onMouseOut={() => setHideCursorWhileHudHover(false)}
+        >
+          <button
+            onClick={() => setTool('shape')}
+            title="Shapes (drag to draw)"
+            className={`p-2 rounded-lg transition-all duration-150 ${
+              tool === 'shape'
+                ? 'bg-gray-900 text-white shadow-sm'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+            }`}
+          >
+            {React.createElement(shapeIcons[shapeKind], { size: 16, strokeWidth: 2 })}
+          </button>
+          {showShapePanel && (
+            <div
+              className="absolute top-10 left-0 z-50 bg-white rounded-xl shadow-xl p-3 flex flex-col gap-2 border border-gray-100 min-w-[160px]"
+              onMouseEnter={openShapePanel}
+              onMouseLeave={closeShapePanel}
+              onMouseDown={() => setHideCursorWhileHudClick(true)}
+              onMouseOver={() => setHideCursorWhileHudHover(true)}
+              onMouseOut={() => setHideCursorWhileHudHover(false)}
+            >
+              <div className="grid grid-cols-2 gap-3">
+                {(['rectangle', 'circle', 'star', 'heart'] as const).map((shape) => {
+                  const Icon = shapeIcons[shape]
+                  const active = shapeKind === shape
+                  return (
+                    <button
+                      key={shape}
+                      onClick={() => {
+                        setShapeKind(shape)
+                        setTool('shape')
+                      }}
+                      className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs capitalize transition-all ${
+                        active
+                          ? 'bg-gray-900 text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Icon size={16} strokeWidth={2} />
+                      {shape}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex gap-2 border-t border-gray-200 pt-2">
+                <button
+                  onClick={() => setShapeFillMode('outline')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${
+                    shapeFillMode === 'outline'
+                      ? 'bg-gray-900 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  Outline
+                </button>
+                <button
+                  onClick={() => setShapeFillMode('fill')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${
+                    shapeFillMode === 'fill'
+                      ? 'bg-gray-900 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  Fill
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Size group */}
