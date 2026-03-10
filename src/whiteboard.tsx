@@ -91,11 +91,13 @@ export const Whiteboard: React.FC = () => {
     const myClearStack = useRef<{ actions: DrawAction[], undoStack: DrawAction[] }[]>([])
     const actionsRef = useRef<DrawAction[]>([])
     const myClearRedoStack = useRef<{ actions: DrawAction[], undoStack: DrawAction[] }[]>([])
-    const [selectedId, setSelectedId] = useState<string | null>(null)
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 const [isDraggingSelection, setIsDraggingSelection] = useState(false)
-const [isResizingSelection, setIsResizingSelection] = useState<string | null>(null) // handle id
-const dragStartRef = useRef<{ x: number; y: number; actionSnapshot: DrawAction } | null>(null)
-const resizeStartRef = useRef<{ x: number; y: number; bbox: BBox; actionSnapshot: DrawAction } | null>(null)
+const [isResizingSelection, setIsResizingSelection] = useState<string | null>(null)
+const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+const dragStartRef = useRef<{ x: number; y: number; snapshots: DrawAction[] } | null>(null)
+const resizeStartRef = useRef<{ x: number; y: number; bbox: BBox; snapshots: DrawAction[] } | null>(null)
 
     //SETTINGS
     const [showSettings, setShowSettings] = useState(false)
@@ -239,7 +241,19 @@ const resizeStartRef = useRef<{ x: number; y: number; bbox: BBox; actionSnapshot
     }, [])
 
 type BBox = { minX: number; minY: number; maxX: number; maxY: number }
+const getMultiBBox = (acts: DrawAction[]): BBox | null => {
+    if (acts.length === 0) return null
+    const boxes = acts.map(getBBox)
+    return {
+        minX: Math.min(...boxes.map(b => b.minX)),
+        minY: Math.min(...boxes.map(b => b.minY)),
+        maxX: Math.max(...boxes.map(b => b.maxX)),
+        maxY: Math.max(...boxes.map(b => b.maxY)),
+    }
+}
 
+const bboxesIntersect = (a: BBox, b: BBox) =>
+    a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
 const getBBox = (action: DrawAction): BBox => {
     if (action.type === 'shape' && action.points.length >= 2) {
         const [s, e] = action.points
@@ -389,41 +403,56 @@ const drawShapePath = (c: CanvasRenderingContext2D, action: DrawAction) => {
 
     // selection box
     // selection outline following stroke path
-if (selectedId) {
-    const sel = actions.find(a => a.id === selectedId)
-    if (sel) {
-        const bbox = getBBox(sel)
-        const pad = 10
-        const outlineWidth = (sel.lineWidth || mouseSize) - 6
+// marquee rect while dragging
+if (marquee) {
+    ctx.save()
+    ctx.strokeStyle = '#3b82f6'
+    ctx.lineWidth = 1 / scale
+    ctx.setLineDash([4 / scale, 3 / scale])
+    ctx.fillStyle = 'rgba(59,130,246,0.08)'
+    ctx.fillRect(marquee.x, marquee.y, marquee.w, marquee.h)
+    ctx.strokeRect(marquee.x, marquee.y, marquee.w, marquee.h)
+    ctx.setLineDash([])
+    ctx.restore()
+}
 
+// selection outlines for all selected strokes
+if (selectedIds.size > 0) {
+    const selectedActions = actions.filter(a => a.id && selectedIds.has(a.id))
+    const multiBbox = getMultiBBox(selectedActions)
+
+    // draw outline on each stroke
+    for (const sel of selectedActions) {
+        const outlineWidth = (sel.lineWidth || mouseSize) - 6
         ctx.save()
         ctx.setLineDash([6 / scale, 3 / scale])
         ctx.strokeStyle = '#3b82f6'
         ctx.lineWidth = outlineWidth / scale
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
-
         if (sel.type === 'stroke') {
             ctx.beginPath()
             ctx.moveTo(sel.points[0].x, sel.points[0].y)
-            for (let i = 1; i < sel.points.length; i++) {
-                ctx.lineTo(sel.points[i].x, sel.points[i].y)
-            }
+            for (let i = 1; i < sel.points.length; i++) ctx.lineTo(sel.points[i].x, sel.points[i].y)
             ctx.stroke()
         } else if (sel.type === 'shape') {
             ctx.lineWidth = (sel.lineWidth || mouseSize) + 6 / scale
             drawShapePath(ctx, sel)
             ctx.stroke()
         }
-
         ctx.setLineDash([])
+        ctx.restore()
+    }
 
-        // resize handles on bbox corners
+    // resize handles on combined bbox
+    if (multiBbox) {
+        const pad = 10
+        const hs = HANDLE_SIZE / scale
+        ctx.save()
         ctx.fillStyle = 'white'
         ctx.strokeStyle = '#3b82f6'
         ctx.lineWidth = 1.5 / scale
-        const hs = HANDLE_SIZE / scale
-        for (const h of getResizeHandles({ minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad })) {
+        for (const h of getResizeHandles({ minX: multiBbox.minX - pad, minY: multiBbox.minY - pad, maxX: multiBbox.maxX + pad, maxY: multiBbox.maxY + pad })) {
             ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
             ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
         }
@@ -437,7 +466,7 @@ if (selectedId) {
     // effect drives redraw whenever relevant state changes
     useEffect(() => {
     redraw()
-}, [actions, currentAction, panX, panY, canvasSize, scale, showGrid, gridSize, colorScheme, customBg, selectedId])
+}, [actions, currentAction, panX, panY, canvasSize, scale, showGrid, gridSize, colorScheme, customBg, selectedIds, marquee])
 
     // resize listener that updates canvasSize from the element’s
     // client dimensions.  clientWidth/Height reflect the size of the
@@ -465,34 +494,35 @@ if (selectedId) {
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
 
     if (tool === 'select') {
-        // Check resize handles first
-        if (selectedId) {
-            const sel = actions.find(a => a.id === selectedId)
-            if (sel) {
-                const bbox = getBBox(sel)
-                const pad = 10
-                const paddedBbox = { minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad }
-                const hs = HANDLE_SIZE / scaleRef.current
-                for (const h of getResizeHandles(paddedBbox)) {
-                    if (Math.abs(x - h.x) < hs && Math.abs(y - h.y) < hs) {
-                        setIsResizingSelection(h.id)
-                        resizeStartRef.current = { x, y, bbox: paddedBbox, actionSnapshot: { ...sel, points: [...sel.points] } }
-                        return
-                    }
-                }
-                // Check if clicking inside selection to drag
-                if (pointInBBox(x, y, paddedBbox, 0)) {
-                    setIsDraggingSelection(true)
-                    dragStartRef.current = { x, y, actionSnapshot: { ...sel, points: sel.points.map(p => ({ ...p })) } }
+    // Check resize handles on combined bbox
+    if (selectedIds.size > 0) {
+        const selectedActions = actions.filter(a => a.id && selectedIds.has(a.id))
+        const multiBbox = getMultiBBox(selectedActions)
+        if (multiBbox) {
+            const pad = 10
+            const paddedBbox = { minX: multiBbox.minX - pad, minY: multiBbox.minY - pad, maxX: multiBbox.maxX + pad, maxY: multiBbox.maxY + pad }
+            const hs = HANDLE_SIZE / scaleRef.current
+            for (const h of getResizeHandles(paddedBbox)) {
+                if (Math.abs(x - h.x) < hs && Math.abs(y - h.y) < hs) {
+                    setIsResizingSelection(h.id)
+                    resizeStartRef.current = { x, y, bbox: paddedBbox, snapshots: selectedActions.map(a => ({ ...a, points: a.points.map(p => ({ ...p })) })) }
                     return
                 }
             }
+            // Drag the whole selection
+            if (pointInBBox(x, y, paddedBbox, 0)) {
+                setIsDraggingSelection(true)
+                dragStartRef.current = { x, y, snapshots: selectedActions.map(a => ({ ...a, points: a.points.map(p => ({ ...p })) })) }
+                return
+            }
         }
-        // Hit test strokes
-        const hit = [...actions].reverse().find(a => pointInBBox(x, y, getBBox(a)))
-        setSelectedId(hit?.id ?? null)
-        return
     }
+    // Start marquee
+    marqueeStartRef.current = { x, y }
+    setMarquee({ x, y, w: 0, h: 0 })
+    setSelectedIds(new Set())
+    return
+}
 
     setIsDrawing(true)
     const base = {
@@ -518,51 +548,54 @@ const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
 
     if (tool === 'select') {
-        if (isDraggingSelection && dragStartRef.current && selectedId) {
-            const dx = x - dragStartRef.current.x
-            const dy = y - dragStartRef.current.y
-            const snap = dragStartRef.current.actionSnapshot
-            setActionsAndRef(prev => prev.map(a => a.id === selectedId
-                ? { ...a, points: snap.points.map(p => ({ x: p.x + dx, y: p.y + dy })) }
-                : a
-            ))
-            return
-        }
-        if (isResizingSelection && resizeStartRef.current && selectedId) {
-    const { actionSnapshot, x: sx, y: sy } = resizeStartRef.current
-    const dx = x - sx
-    const dy = y - sy
-
-    // Use the unpadded stroke bbox as the scale origin
-    const strokeBbox = getBBox(actionSnapshot)
-    const origW = strokeBbox.maxX - strokeBbox.minX
-    const origH = strokeBbox.maxY - strokeBbox.minY
-    if (origW === 0 || origH === 0) return
-
-    const handle = isResizingSelection // 'nw' | 'ne' | 'se' | 'sw'
-
-    // Determine new bbox edges based on which handle is being dragged
-    const newMinX = handle.includes('w') ? strokeBbox.minX + dx : strokeBbox.minX
-    const newMaxX = handle.includes('e') ? strokeBbox.maxX + dx : strokeBbox.maxX
-    const newMinY = handle.includes('n') ? strokeBbox.minY + dy : strokeBbox.minY
-    const newMaxY = handle.includes('s') ? strokeBbox.maxY + dy : strokeBbox.maxY
-
-    const newW = newMaxX - newMinX
-    const newH = newMaxY - newMinY
-    if (Math.abs(newW) < 1 || Math.abs(newH) < 1) return
-
-    setActionsAndRef(prev => prev.map(a => {
-        if (a.id !== selectedId) return a
-        const newPoints = actionSnapshot.points.map(p => ({
-            x: newMinX + ((p.x - strokeBbox.minX) / origW) * newW,
-            y: newMinY + ((p.y - strokeBbox.minY) / origH) * newH,
+    if (isDraggingSelection && dragStartRef.current) {
+        const dx = x - dragStartRef.current.x
+        const dy = y - dragStartRef.current.y
+        const snapshotMap = new Map(dragStartRef.current.snapshots.map(s => [s.id, s]))
+        setActionsAndRef(prev => prev.map(a => {
+            const snap = a.id ? snapshotMap.get(a.id) : undefined
+            if (!snap) return a
+            return { ...a, points: snap.points.map(p => ({ x: p.x + dx, y: p.y + dy })) }
         }))
-        return { ...a, points: newPoints }
-    }))
-    return
-}
         return
     }
+    if (isResizingSelection && resizeStartRef.current) {
+        const { snapshots, x: sx, y: sy } = resizeStartRef.current
+        const dx = x - sx
+        const dy = y - sy
+        const multiBbox = getMultiBBox(snapshots)
+        if (!multiBbox) return
+        const origW = multiBbox.maxX - multiBbox.minX
+        const origH = multiBbox.maxY - multiBbox.minY
+        if (origW === 0 || origH === 0) return
+        const handle = isResizingSelection
+        const newMinX = handle.includes('w') ? multiBbox.minX + dx : multiBbox.minX
+        const newMaxX = handle.includes('e') ? multiBbox.maxX + dx : multiBbox.maxX
+        const newMinY = handle.includes('n') ? multiBbox.minY + dy : multiBbox.minY
+        const newMaxY = handle.includes('s') ? multiBbox.maxY + dy : multiBbox.maxY
+        const newW = newMaxX - newMinX
+        const newH = newMaxY - newMinY
+        if (Math.abs(newW) < 1 || Math.abs(newH) < 1) return
+        const snapshotMap = new Map(snapshots.map(s => [s.id, s]))
+        setActionsAndRef(prev => prev.map(a => {
+            const snap = a.id ? snapshotMap.get(a.id) : undefined
+            if (!snap) return a
+            const newPoints = snap.points.map(p => ({
+                x: newMinX + ((p.x - multiBbox.minX) / origW) * newW,
+                y: newMinY + ((p.y - multiBbox.minY) / origH) * newH,
+            }))
+            return { ...a, points: newPoints }
+        }))
+        return
+    }
+    // Update marquee
+    if (marqueeStartRef.current) {
+        const mx = marqueeStartRef.current.x
+        const my = marqueeStartRef.current.y
+        setMarquee({ x: Math.min(mx, x), y: Math.min(my, y), w: Math.abs(x - mx), h: Math.abs(y - my) })
+    }
+    return
+}
 
     if (!isDrawing || !currentAction) return
     const { x: sx, y: sy } = snapPoint(x, y)
@@ -591,20 +624,36 @@ const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
 
 const stopDrawing = async () => {
     if (isDraggingSelection || isResizingSelection) {
-        setIsDraggingSelection(false)
-        setIsResizingSelection(null)
-        dragStartRef.current = null
-        resizeStartRef.current = null
-        // sync updated action to supabase
-        if (selectedId) {
-            const updated = actionsRef.current.find(a => a.id === selectedId)
-            if (updated) {
-                await supabase.from('strokes').update({ data: updated }).eq('data->>id', updated.id).eq('room_id', roomId)
-                await broadcastEvent('set_state', { actions: actionsRef.current })
-            }
-        }
-        return
+    setIsDraggingSelection(false)
+    setIsResizingSelection(null)
+    dragStartRef.current = null
+    resizeStartRef.current = null
+    const selectedActions = actionsRef.current.filter(a => a.id && selectedIds.has(a.id))
+    for (const updated of selectedActions) {
+        await supabase.from('strokes').update({ data: updated }).eq('data->>id', updated.id).eq('room_id', roomId)
     }
+    await broadcastEvent('set_state', { actions: actionsRef.current })
+    return
+}
+
+// Finish marquee — select all strokes whose bbox intersects
+if (marqueeStartRef.current) {
+    marqueeStartRef.current = null
+    if (marquee && (marquee.w > 4 || marquee.h > 4)) {
+        const marqueeBbox: BBox = { minX: marquee.x, minY: marquee.y, maxX: marquee.x + marquee.w, maxY: marquee.y + marquee.h }
+        const hits = actions.filter(a => bboxesIntersect(getBBox(a), marqueeBbox))
+        setSelectedIds(new Set(hits.map(a => a.id!).filter(Boolean)))
+    } else {
+        // Small drag = click, hit test top stroke
+        const canvas = canvasRef.current
+        if (canvas && marquee) {
+            const hit = [...actions].reverse().find(a => pointInBBox(marquee.x, marquee.y, getBBox(a)))
+            setSelectedIds(hit?.id ? new Set([hit.id]) : new Set())
+        }
+    }
+    setMarquee(null)
+    return
+}
 
     if (!currentAction) {
         setIsDrawing(false)
@@ -690,22 +739,22 @@ const stopDrawing = async () => {
     await broadcastEvent('set_state', { actions: newActions })
 }
     useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.preventDefault()
-            const stroke = actionsRef.current.find(a => a.id === selectedId)
-            if (stroke) {
-                const newActions = actionsRef.current.filter(a => a.id !== selectedId)
-                setActionsAndRef(newActions)
-                setSelectedId(null)
+            const toDelete = actionsRef.current.filter(a => a.id && selectedIds.has(a.id))
+            const newActions = actionsRef.current.filter(a => !a.id || !selectedIds.has(a.id))
+            setActionsAndRef(newActions)
+            setSelectedIds(new Set())
+            for (const stroke of toDelete) {
                 myUndoStack.current.push(stroke)
-                myRedoStack.current = []
-                myClearRedoStack.current = []
-                setCanUndo(true)
-                setCanRedo(false)
-                supabase.from('strokes').delete().eq('data->>id', selectedId).eq('room_id', roomId)
-                broadcastEvent('set_state', { actions: newActions })
+                await supabase.from('strokes').delete().eq('data->>id', stroke.id).eq('room_id', roomId)
             }
+            myRedoStack.current = []
+            myClearRedoStack.current = []
+            setCanUndo(true)
+            setCanRedo(false)
+            await broadcastEvent('set_state', { actions: newActions })
             return
         }
         if (e.metaKey || e.ctrlKey) {
@@ -715,7 +764,7 @@ const stopDrawing = async () => {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-}, [selectedId])
+}, [selectedIds])
 
     const clearCanvas = () => {
         myClearStack.current.push({
@@ -931,22 +980,22 @@ const stopDrawing = async () => {
 
 useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
-            const stroke = actionsRef.current.find(a => a.id === selectedId)
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds) {
+            const stroke = actionsRef.current.find(a => selectedIds.has(a.id!))
             if (stroke) {
-                const newActions = actionsRef.current.filter(a => a.id !== selectedId)
+                const newActions = actionsRef.current.filter(a => !selectedIds.has(a.id!))
                 setActionsAndRef(newActions)
-                setSelectedId(null)
+                setSelectedIds(new Set())
                 myUndoStack.current.push(stroke)
                 setCanUndo(true)
-                supabase.from('strokes').delete().eq('data->>id', selectedId).eq('room_id', roomId)
+                supabase.from('strokes').delete().eq('data->>id', selectedIds).eq('room_id', roomId)
                 broadcastEvent('set_state', { actions: newActions })
             }
         }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-}, [selectedId])
+}, [selectedIds])
 
 
 
