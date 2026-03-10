@@ -106,7 +106,7 @@ const resizeStartRef = useRef<{ x: number; y: number; bbox: BBox; actionSnapshot
     const [gridSize, setGridSize] = useState(50)
     const [snapToGrid, setSnapToGrid] = useState(false)
     const [customBg, setCustomBg] = useState('#ffffff')
-    const [customToolbar] = useState('#f9fafb')
+    // const [customToolbar] = useState('#f9fafb')
     const [shapeKind, setShapeKind] = useState<'rectangle' | 'circle' | 'star' | 'heart'>('rectangle')
     const [shapeFillMode, setShapeFillMode] = useState<'outline' | 'fill'>('outline')
     const [showShapePanel, setShowShapePanel] = useState(false)
@@ -388,33 +388,48 @@ const drawShapePath = (c: CanvasRenderingContext2D, action: DrawAction) => {
     if (currentAction) drawAction(currentAction)
 
     // selection box
-    if (selectedId) {
-        const sel = actions.find(a => a.id === selectedId)
-        if (sel) {
-            const bbox = getBBox(sel)
-            const pad = 10
-            ctx.save()
-            ctx.strokeStyle = '#3b82f6'
-            ctx.lineWidth = 1.5 / scale
-            ctx.setLineDash([6 / scale, 3 / scale])
-            ctx.strokeRect(
-                bbox.minX - pad, bbox.minY - pad,
-                (bbox.maxX - bbox.minX) + pad * 2,
-                (bbox.maxY - bbox.minY) + pad * 2
-            )
-            ctx.setLineDash([])
-            // resize handles
-            ctx.fillStyle = 'white'
-            ctx.strokeStyle = '#3b82f6'
-            ctx.lineWidth = 1.5 / scale
-            const hs = HANDLE_SIZE / scale
-            for (const h of getResizeHandles({ minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad })) {
-                ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
-                ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
+    // selection outline following stroke path
+if (selectedId) {
+    const sel = actions.find(a => a.id === selectedId)
+    if (sel) {
+        const bbox = getBBox(sel)
+        const pad = 10
+        const outlineWidth = (sel.lineWidth || mouseSize) - 6
+
+        ctx.save()
+        ctx.setLineDash([6 / scale, 3 / scale])
+        ctx.strokeStyle = '#3b82f6'
+        ctx.lineWidth = outlineWidth / scale
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+
+        if (sel.type === 'stroke') {
+            ctx.beginPath()
+            ctx.moveTo(sel.points[0].x, sel.points[0].y)
+            for (let i = 1; i < sel.points.length; i++) {
+                ctx.lineTo(sel.points[i].x, sel.points[i].y)
             }
-            ctx.restore()
+            ctx.stroke()
+        } else if (sel.type === 'shape') {
+            ctx.lineWidth = (sel.lineWidth || mouseSize) + 6 / scale
+            drawShapePath(ctx, sel)
+            ctx.stroke()
         }
+
+        ctx.setLineDash([])
+
+        // resize handles on bbox corners
+        ctx.fillStyle = 'white'
+        ctx.strokeStyle = '#3b82f6'
+        ctx.lineWidth = 1.5 / scale
+        const hs = HANDLE_SIZE / scale
+        for (const h of getResizeHandles({ minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad })) {
+            ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
+            ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
+        }
+        ctx.restore()
     }
+}
 
     ctx.restore()
 }
@@ -514,7 +529,7 @@ const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
             return
         }
         if (isResizingSelection && resizeStartRef.current && selectedId) {
-    const { bbox, actionSnapshot, x: sx, y: sy } = resizeStartRef.current
+    const { actionSnapshot, x: sx, y: sy } = resizeStartRef.current
     const dx = x - sx
     const dy = y - sy
 
