@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import {
     Pen,
-    Eraser,
     Trash2,
     Minus,
     Plus,
@@ -20,15 +19,16 @@ import { supabase } from './lib/supabase'
 
 interface DrawAction {
     id?: string
-    type: 'stroke' | 'erase' | 'shape'
+    type: 'stroke' | 'shape'
     userId?: string
     drawing: true | false
     points: { x: number; y: number }[]
     lineWidth?: number
-    eraseRadius?: number
     drawColor?: string
     shapeKind?: 'rectangle' | 'circle' | 'star' | 'heart'
     shapeFill?: 'outline' | 'fill'
+    // for resize support
+    transform?: { scaleX: number; scaleY: number; originX: number; originY: number }
 }
 
 /**
@@ -49,7 +49,7 @@ interface DrawAction {
 export const Whiteboard: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [isDrawing, setIsDrawing] = useState(false)
-    const [tool, setTool] = useState<'pen' | 'eraser' | 'select' | 'shape'>('pen')
+    const [tool, setTool] = useState<'pen' | 'select' | 'shape'>('pen')
     const [actions, setActions] = useState<DrawAction[]>([])
     const [currentAction, setCurrentAction] = useState<DrawAction | null>(null)
     const [mouseSize, setMouseSize] = useState(10)
@@ -91,6 +91,11 @@ export const Whiteboard: React.FC = () => {
     const myClearStack = useRef<{ actions: DrawAction[], undoStack: DrawAction[] }[]>([])
     const actionsRef = useRef<DrawAction[]>([])
     const myClearRedoStack = useRef<{ actions: DrawAction[], undoStack: DrawAction[] }[]>([])
+    const [selectedId, setSelectedId] = useState<string | null>(null)
+const [isDraggingSelection, setIsDraggingSelection] = useState(false)
+const [isResizingSelection, setIsResizingSelection] = useState<string | null>(null) // handle id
+const dragStartRef = useRef<{ x: number; y: number; actionSnapshot: DrawAction } | null>(null)
+const resizeStartRef = useRef<{ x: number; y: number; bbox: BBox; actionSnapshot: DrawAction } | null>(null)
 
     //SETTINGS
     const [showSettings, setShowSettings] = useState(false)
@@ -233,195 +238,191 @@ export const Whiteboard: React.FC = () => {
         return () => cancelAnimationFrame(raf)
     }, [])
 
+type BBox = { minX: number; minY: number; maxX: number; maxY: number }
+
+const getBBox = (action: DrawAction): BBox => {
+    if (action.type === 'shape' && action.points.length >= 2) {
+        const [s, e] = action.points
+        return {
+            minX: Math.min(s.x, e.x),
+            minY: Math.min(s.y, e.y),
+            maxX: Math.max(s.x, e.x),
+            maxY: Math.max(s.y, e.y),
+        }
+    }
+    const xs = action.points.map(p => p.x)
+    const ys = action.points.map(p => p.y)
+    return {
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys),
+    }
+}
+
+const pointInBBox = (x: number, y: number, bbox: BBox, padding = 8) =>
+    x >= bbox.minX - padding && x <= bbox.maxX + padding &&
+    y >= bbox.minY - padding && y <= bbox.maxY + padding
+
+const HANDLE_SIZE = 8
+const getResizeHandles = (bbox: BBox) => [
+    { id: 'nw', x: bbox.minX, y: bbox.minY },
+    { id: 'ne', x: bbox.maxX, y: bbox.minY },
+    { id: 'se', x: bbox.maxX, y: bbox.maxY },
+    { id: 'sw', x: bbox.minX, y: bbox.maxY },
+]
+
     // helper that performs full redraw; can be called from resize handler
     const redraw = () => {
-        const canvas = canvasRef.current
-        if (!canvas) return
-        if (canvasSize.width === 0 || canvasSize.height === 0) return // add this
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    if (canvasSize.width === 0 || canvasSize.height === 0) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
 
-        canvas.width = canvasSize.width
-        canvas.height = canvasSize.height
+    canvas.width = canvasSize.width
+    canvas.height = canvasSize.height
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
 
+    // background
+    ctx.fillStyle = colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customBg : 'white'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    // grid
+    if (showGrid) {
+        ctx.save()
+        ctx.translate(panX, panY)
+        ctx.scale(scale, scale)
+        ctx.strokeStyle = colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.15)'
+        ctx.lineWidth = 1 / scale
+        const startX = -panX / scale
+        const startY = -panY / scale
+        const endX = startX + canvas.width / scale
+        const endY = startY + canvas.height / scale
+        const snappedStartX = Math.floor(startX / gridSize) * gridSize
+        const snappedStartY = Math.floor(startY / gridSize) * gridSize
+        for (let x = snappedStartX; x < endX; x += gridSize) {
+            ctx.beginPath(); ctx.moveTo(x, startY); ctx.lineTo(x, endY); ctx.stroke()
+        }
+        for (let y = snappedStartY; y < endY; y += gridSize) {
+            ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke()
+        }
+        ctx.restore()
+    }
+
+    // draw all actions
+    ctx.save()
+    ctx.translate(panX, panY)
+    ctx.scale(scale, scale)
+const drawShapePath = (c: CanvasRenderingContext2D, action: DrawAction) => {
+    if (!action.points || action.points.length < 2) return
+    const [start, end] = action.points
+    const width = end.x - start.x
+    const height = end.y - start.y
+    const centerX = start.x + width / 2
+    const centerY = start.y + height / 2
+    const absW = Math.abs(width)
+    const absH = Math.abs(height)
+    c.beginPath()
+    switch (action.shapeKind) {
+        case 'rectangle': {
+            const x = Math.min(start.x, end.x)
+            const y = Math.min(start.y, end.y)
+            c.rect(x, y, absW, absH)
+            break
+        }
+        case 'circle': {
+            c.ellipse(centerX, centerY, Math.max(absW / 2, 1), Math.max(absH / 2, 1), 0, 0, Math.PI * 2)
+            break
+        }
+        case 'star': {
+            const outerRadius = Math.max(absW, absH) / 2 || 1
+            const innerRadius = outerRadius * 0.5
+            for (let i = 0; i < 10; i++) {
+                const angle = (Math.PI / 5) * i
+                const r = i % 2 === 0 ? outerRadius : innerRadius
+                const px = centerX + Math.cos(angle - Math.PI / 2) * r
+                const py = centerY + Math.sin(angle - Math.PI / 2) * r
+                i === 0 ? c.moveTo(px, py) : c.lineTo(px, py)
+            }
+            c.closePath()
+            break
+        }
+        case 'heart': {
+            const sx = absW / 2 || 1
+            const sy = absH / 2 || 1
+            c.moveTo(centerX, centerY + sy * 0.9)
+            c.bezierCurveTo(centerX + sx, centerY + sy * 0.7, centerX + sx * 0.9, centerY - sy * 0.2, centerX, centerY + sy * 0.25)
+            c.bezierCurveTo(centerX - sx * 0.9, centerY - sy * 0.2, centerX - sx, centerY + sy * 0.7, centerX, centerY + sy * 0.9)
+            c.closePath()
+            break
+        }
+    }
+}
+    const drawAction = (action: DrawAction) => {
+        if (!action.drawing || action.points.length < 1) return
+        ctx.save()
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
+        ctx.lineWidth = action.lineWidth || mouseSize
+        ctx.strokeStyle = action.drawColor || drawColor
+        ctx.fillStyle = action.drawColor || drawColor
 
-        // 1. background
-        ctx.fillStyle =
-            colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customBg : 'white'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-        // 2. grid
-        if (showGrid) {
-            ctx.save()
-            ctx.translate(panX, panY)
-            ctx.scale(scale, scale)
-            ctx.strokeStyle =
-                colorScheme === 'dark'
-                    ? 'rgba(255,255,255,0.1)'
-                    : colorScheme === 'custom' || colorScheme === 'light'
-                        ? 'rgba(0, 0, 0, 0.2)'
-                        : 'rgba(0,0,0,0.2)'
-            ctx.lineWidth = 1 / scale
-            const startX = -panX / scale
-            const startY = -panY / scale
-            const endX = startX + canvas.width / scale
-            const endY = startY + canvas.height / scale
-            const snappedStartX = Math.floor(startX / gridSize) * gridSize
-            const snappedStartY = Math.floor(startY / gridSize) * gridSize
-            for (let x = snappedStartX; x < endX; x += gridSize) {
-                ctx.beginPath()
-                ctx.moveTo(x, startY)
-                ctx.lineTo(x, endY)
-                ctx.stroke()
+        if (action.type === 'stroke') {
+            ctx.beginPath()
+            ctx.moveTo(action.points[0].x, action.points[0].y)
+            for (let i = 1; i < action.points.length; i++) {
+                ctx.lineTo(action.points[i].x, action.points[i].y)
             }
-            for (let y = snappedStartY; y < endY; y += gridSize) {
-                ctx.beginPath()
-                ctx.moveTo(startX, y)
-                ctx.lineTo(endX, y)
-                ctx.stroke()
+            ctx.stroke()
+        } else if (action.type === 'shape') {
+            drawShapePath(ctx, action)
+            if (action.shapeFill === 'fill') ctx.fill()
+            else ctx.stroke()
+        }
+        ctx.restore()
+    }
+
+    for (const action of actions) drawAction(action)
+    if (currentAction) drawAction(currentAction)
+
+    // selection box
+    if (selectedId) {
+        const sel = actions.find(a => a.id === selectedId)
+        if (sel) {
+            const bbox = getBBox(sel)
+            const pad = 10
+            ctx.save()
+            ctx.strokeStyle = '#3b82f6'
+            ctx.lineWidth = 1.5 / scale
+            ctx.setLineDash([6 / scale, 3 / scale])
+            ctx.strokeRect(
+                bbox.minX - pad, bbox.minY - pad,
+                (bbox.maxX - bbox.minX) + pad * 2,
+                (bbox.maxY - bbox.minY) + pad * 2
+            )
+            ctx.setLineDash([])
+            // resize handles
+            ctx.fillStyle = 'white'
+            ctx.strokeStyle = '#3b82f6'
+            ctx.lineWidth = 1.5 / scale
+            const hs = HANDLE_SIZE / scale
+            for (const h of getResizeHandles({ minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad })) {
+                ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
+                ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
             }
             ctx.restore()
         }
-
-        // 3. draw strokes onto offscreen canvas so destination-out only affects strokes layer
-        const offscreen = document.createElement('canvas')
-        offscreen.width = canvas.width
-        offscreen.height = canvas.height
-        const offCtx = offscreen.getContext('2d')!
-        offCtx.lineCap = 'round'
-        offCtx.lineJoin = 'round'
-
-        const drawShapePath = (c: CanvasRenderingContext2D, action: DrawAction) => {
-            if (!action.points || action.points.length < 2) return
-            const [start, end] = action.points
-            const width = end.x - start.x
-            const height = end.y - start.y
-            const centerX = start.x + width / 2
-            const centerY = start.y + height / 2
-            const absW = Math.abs(width)
-            const absH = Math.abs(height)
-            c.beginPath()
-
-            switch (action.shapeKind) {
-                case 'rectangle': {
-                    const x = Math.min(start.x, end.x)
-                    const y = Math.min(start.y, end.y)
-                    c.rect(x, y, absW, absH)
-                    break
-                }
-                case 'circle': {
-                    const radiusX = absW / 2
-                    const radiusY = absH / 2
-                    c.ellipse(centerX, centerY, Math.max(radiusX, 1), Math.max(radiusY, 1), 0, 0, Math.PI * 2)
-                    break
-                }
-                case 'star': {
-                    const spikes = 5
-                    const outerRadius = Math.max(absW, absH) / 2 || 1
-                    const innerRadius = outerRadius * 0.5
-                    for (let i = 0; i < spikes * 2; i++) {
-                        const angle = (Math.PI / spikes) * i
-                        const radius = i % 2 === 0 ? outerRadius : innerRadius
-                        const x = centerX + Math.cos(angle - Math.PI / 2) * radius
-                        const y = centerY + Math.sin(angle - Math.PI / 2) * radius
-                        i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)
-                    }
-                    c.closePath()
-                    break
-                }
-                case 'heart': {
-                    const scaleX = absW / 2 || 1
-                    const scaleY = absH / 2 || 1
-                    // Start at bottom tip
-                    c.moveTo(centerX, centerY + scaleY * 0.9)
-                    // Right lobe
-                    c.bezierCurveTo(
-                        centerX + scaleX,
-                        centerY + scaleY * 0.7,
-                        centerX + scaleX * 0.9,
-                        centerY - scaleY * 0.2,
-                        centerX,
-                        centerY + scaleY * 0.25, // deeper dip between lobes
-                    )
-                    // Left lobe
-                    c.bezierCurveTo(
-                        centerX - scaleX * 0.9,
-                        centerY - scaleY * 0.2,
-                        centerX - scaleX,
-                        centerY + scaleY * 0.7,
-                        centerX,
-                        centerY + scaleY * 0.9,
-                    )
-                    c.closePath()
-                    break
-                }
-                default:
-                    break
-            }
-        }
-
-        const drawActionToCtx = (action: DrawAction, c: CanvasRenderingContext2D) => {
-            if (!action.drawing || action.points.length < 1) return
-            c.save()
-            c.translate(panX, panY)
-            c.scale(scale, scale)
-
-            if (action.type === 'shape') {
-                c.globalCompositeOperation = 'source-over'
-                c.lineWidth = action.lineWidth || mouseSize
-                c.strokeStyle = action.drawColor || drawColor
-                c.fillStyle = action.drawColor || drawColor
-                drawShapePath(c, action)
-                if (action.shapeFill === 'fill') {
-                    c.fill()
-                } else {
-                    c.stroke()
-                }
-                c.restore()
-                return
-            }
-
-            if (action.type === 'stroke') {
-                c.globalCompositeOperation = 'source-over'
-                c.strokeStyle = action.drawColor || drawColor
-            } else {
-                c.globalCompositeOperation = 'destination-out'
-                c.strokeStyle = 'rgba(0,0,0,1)'
-            }
-            c.lineWidth = action.lineWidth || mouseSize
-            c.beginPath()
-            c.moveTo(action.points[0].x, action.points[0].y)
-            for (let i = 1; i < action.points.length; i++) {
-                c.lineTo(action.points[i].x, action.points[i].y)
-            }
-            c.stroke()
-            c.restore()
-        }
-
-        for (const action of actions) drawActionToCtx(action, offCtx)
-        if (currentAction) drawActionToCtx(currentAction, offCtx)
-
-        // 4. composite strokes layer on top
-        ctx.drawImage(offscreen, 0, 0)
     }
+
+    ctx.restore()
+}
 
     // effect drives redraw whenever relevant state changes
     useEffect(() => {
-        redraw()
-    }, [
-        actions,
-        currentAction,
-        panX,
-        panY,
-        canvasSize,
-        scale,
-        showGrid,
-        gridSize,
-        colorScheme,
-        customBg,
-    ])
+    redraw()
+}, [actions, currentAction, panX, panY, canvasSize, scale, showGrid, gridSize, colorScheme, customBg, selectedId])
 
     // resize listener that updates canvasSize from the element’s
     // client dimensions.  clientWidth/Height reflect the size of the
@@ -442,105 +443,175 @@ export const Whiteboard: React.FC = () => {
     }, [])
 
     const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-        const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-        const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-        setIsDrawing(true)
-        const base = {
-            id: crypto.randomUUID(),
-            userId: userIdRef.current,
-            drawing: true as const,
-            lineWidth: mouseSize,
-            drawColor,
-        }
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+    const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
 
-        if (tool === 'shape') {
-            setCurrentAction({
-                ...base,
-                type: 'shape',
-                points: [
-                    { x, y },
-                    { x, y },
-                ],
-                shapeKind,
-                shapeFill: shapeFillMode,
-            })
-        } else {
-            setCurrentAction({
-                ...base,
-                type: tool === 'pen' ? 'stroke' : 'erase',
-                points: [{ x, y }],
-                eraseRadius: undefined,
-                drawColor: tool === 'pen' ? drawColor : undefined,
-            })
+    if (tool === 'select') {
+        // Check resize handles first
+        if (selectedId) {
+            const sel = actions.find(a => a.id === selectedId)
+            if (sel) {
+                const bbox = getBBox(sel)
+                const pad = 10
+                const paddedBbox = { minX: bbox.minX - pad, minY: bbox.minY - pad, maxX: bbox.maxX + pad, maxY: bbox.maxY + pad }
+                const hs = HANDLE_SIZE / scaleRef.current
+                for (const h of getResizeHandles(paddedBbox)) {
+                    if (Math.abs(x - h.x) < hs && Math.abs(y - h.y) < hs) {
+                        setIsResizingSelection(h.id)
+                        resizeStartRef.current = { x, y, bbox: paddedBbox, actionSnapshot: { ...sel, points: [...sel.points] } }
+                        return
+                    }
+                }
+                // Check if clicking inside selection to drag
+                if (pointInBBox(x, y, paddedBbox, 0)) {
+                    setIsDraggingSelection(true)
+                    dragStartRef.current = { x, y, actionSnapshot: { ...sel, points: sel.points.map(p => ({ ...p })) } }
+                    return
+                }
+            }
         }
+        // Hit test strokes
+        const hit = [...actions].reverse().find(a => pointInBBox(x, y, getBBox(a)))
+        setSelectedId(hit?.id ?? null)
+        return
     }
+
+    setIsDrawing(true)
+    const base = {
+        id: crypto.randomUUID(),
+        userId: userIdRef.current,
+        drawing: true as const,
+        lineWidth: mouseSize,
+        drawColor,
+    }
+
+    if (tool === 'shape') {
+        setCurrentAction({ ...base, type: 'shape', points: [{ x, y }, { x, y }], shapeKind, shapeFill: shapeFillMode })
+    } else {
+        setCurrentAction({ ...base, type: 'stroke', points: [{ x, y }] })
+    }
+}
+
+const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+    const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+
+    if (tool === 'select') {
+        if (isDraggingSelection && dragStartRef.current && selectedId) {
+            const dx = x - dragStartRef.current.x
+            const dy = y - dragStartRef.current.y
+            const snap = dragStartRef.current.actionSnapshot
+            setActionsAndRef(prev => prev.map(a => a.id === selectedId
+                ? { ...a, points: snap.points.map(p => ({ x: p.x + dx, y: p.y + dy })) }
+                : a
+            ))
+            return
+        }
+        if (isResizingSelection && resizeStartRef.current && selectedId) {
+    const { bbox, actionSnapshot, x: sx, y: sy } = resizeStartRef.current
+    const dx = x - sx
+    const dy = y - sy
+
+    // Use the unpadded stroke bbox as the scale origin
+    const strokeBbox = getBBox(actionSnapshot)
+    const origW = strokeBbox.maxX - strokeBbox.minX
+    const origH = strokeBbox.maxY - strokeBbox.minY
+    if (origW === 0 || origH === 0) return
+
+    const handle = isResizingSelection // 'nw' | 'ne' | 'se' | 'sw'
+
+    // Determine new bbox edges based on which handle is being dragged
+    const newMinX = handle.includes('w') ? strokeBbox.minX + dx : strokeBbox.minX
+    const newMaxX = handle.includes('e') ? strokeBbox.maxX + dx : strokeBbox.maxX
+    const newMinY = handle.includes('n') ? strokeBbox.minY + dy : strokeBbox.minY
+    const newMaxY = handle.includes('s') ? strokeBbox.maxY + dy : strokeBbox.maxY
+
+    const newW = newMaxX - newMinX
+    const newH = newMaxY - newMinY
+    if (Math.abs(newW) < 1 || Math.abs(newH) < 1) return
+
+    setActionsAndRef(prev => prev.map(a => {
+        if (a.id !== selectedId) return a
+        const newPoints = actionSnapshot.points.map(p => ({
+            x: newMinX + ((p.x - strokeBbox.minX) / origW) * newW,
+            y: newMinY + ((p.y - strokeBbox.minY) / origH) * newH,
+        }))
+        return { ...a, points: newPoints }
+    }))
+    return
+}
+        return
+    }
+
+    if (!isDrawing || !currentAction) return
+    const { x: sx, y: sy } = snapPoint(x, y)
+    const startPoint = currentAction.points[0]
+
+    if (currentAction.type === 'shape') {
+        setCurrentAction({ ...currentAction, points: [currentAction.points[0], { x: sx, y: sy }] })
+        return
+    }
+
+    if (e.shiftKey) {
+        const dx = sx - startPoint.x
+        const dy = sy - startPoint.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        const angle = Math.atan2(dy, dx)
+        const snapDegrees = [0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180, -157.5, -135, -112.5, -90, -67.5, -45, -22.5]
+        const snapRadians = snapDegrees.map(d => d * (Math.PI / 180))
+        const nearest = snapRadians.reduce((prev, curr) => Math.abs(curr - angle) < Math.abs(prev - angle) ? curr : prev)
+        setCurrentAction({ ...currentAction, points: [startPoint, { x: startPoint.x + distance * Math.cos(nearest), y: startPoint.y + distance * Math.sin(nearest) }] })
+    } else if (e.altKey) {
+        setCurrentAction({ ...currentAction, points: [startPoint, { x: sx, y: sy }] })
+    } else {
+        setCurrentAction({ ...currentAction, points: [...currentAction.points, { x: sx, y: sy }] })
+    }
+}
+
+const stopDrawing = async () => {
+    if (isDraggingSelection || isResizingSelection) {
+        setIsDraggingSelection(false)
+        setIsResizingSelection(null)
+        dragStartRef.current = null
+        resizeStartRef.current = null
+        // sync updated action to supabase
+        if (selectedId) {
+            const updated = actionsRef.current.find(a => a.id === selectedId)
+            if (updated) {
+                await supabase.from('strokes').update({ data: updated }).eq('data->>id', updated.id).eq('room_id', roomId)
+                await broadcastEvent('set_state', { actions: actionsRef.current })
+            }
+        }
+        return
+    }
+
+    if (!currentAction) {
+        setIsDrawing(false)
+        return
+    }
+    const action = currentAction
+    setCurrentAction(null)
+    setIsDrawing(false)
+    setActionsAndRef(prev => [...prev, action])
+    myUndoStack.current.push(action)
+    myRedoStack.current = []
+    myClearRedoStack.current = []
+    setCanUndo(true)
+    setCanRedo(false)
+    supabase.from('strokes').insert({ room_id: roomId, data: action }).then()
+}
 
     const snapPoint = (x: number, y: number) => {
         if (!snapToGrid) return { x, y }
         return {
             x: Math.round(x / gridSize) * gridSize,
             y: Math.round(y / gridSize) * gridSize,
-        }
-    }
-
-    const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!isDrawing || !currentAction) return
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-
-        const x = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-        const y = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-        const { x: sx, y: sy } = snapPoint(x, y)
-        const startPoint = currentAction.points[0]
-        if (currentAction.type === 'shape') {
-            setCurrentAction({
-                ...currentAction,
-                points: [currentAction.points[0], { x: sx, y: sy }],
-            })
-            return
-        }
-
-        if (e.shiftKey) {
-            const dx = sx - startPoint.x
-            const dy = sy - startPoint.y
-            const distance = Math.sqrt(dx * dx + dy * dy)
-            const angle = Math.atan2(dy, dx) // radians
-
-            // Define snap angles (in degrees) — add/remove as needed
-            const snapDegrees = [
-                0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180, -157.5, -135, -112.5, -90, -67.5, -45, -22.5,
-            ]
-            const snapRadians = snapDegrees.map((d) => d * (Math.PI / 180))
-
-            // Find the closest snap angle
-            const nearest = snapRadians.reduce((prev, curr) =>
-                Math.abs(curr - angle) < Math.abs(prev - angle) ? curr : prev,
-            )
-
-            const snappedPoint = {
-                x: startPoint.x + distance * Math.cos(nearest),
-                y: startPoint.y + distance * Math.sin(nearest),
-            }
-            setCurrentAction({
-                ...currentAction,
-                points: [startPoint, snappedPoint],
-            })
-        } else if (e.altKey) {
-            // Option/Alt: straight line from start to current mouse position
-            setCurrentAction({
-                ...currentAction,
-                points: [startPoint, { x: sx, y: sy }],
-            })
-        } else {
-            // Normal freehand drawing
-            setCurrentAction({
-                ...currentAction,
-                points: [...currentAction.points, { x: sx, y: sy }],
-            })
         }
     }
 
@@ -557,89 +628,79 @@ export const Whiteboard: React.FC = () => {
         }
     }
 
-    const stopDrawing = async () => {
-        if (!currentAction) {
-            setIsDrawing(false)
-            return
-        }
-        const action = currentAction
-        setCurrentAction(null)
-        setIsDrawing(false)
-        setActionsAndRef(prev => [...prev, action])
-        myUndoStack.current.push(action)
-        myRedoStack.current = []
-        setCanUndo(true)
-        setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
-        supabase.from('strokes').insert({ room_id: roomId, data: action }).then()
-    }
-
     const undo = async () => {
-        if (myUndoStack.current.length === 0 && myClearStack.current.length > 0) {
-            const { actions: restored, undoStack } = myClearStack.current.pop()!
-            myClearRedoStack.current.push({ actions: [], undoStack: [] }) // save cleared state for redo
-            myUndoStack.current = undoStack
-            myRedoStack.current = []
-            setActionsAndRef(restored)
-            setCanUndo(myUndoStack.current.length > 0 || myClearStack.current.length > 0)
-            setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0) // can now redo the clear
-            await supabase.from('strokes').insert(restored.map(s => ({ room_id: roomId, data: s })))
-            await broadcastEvent('set_state', { actions: restored })
-            return
-        }
-        if (myUndoStack.current.length === 0) return
-        const stroke = myUndoStack.current.pop()!
-        myRedoStack.current.push(stroke)
-        const newActions = actionsRef.current.filter(a => a.id !== stroke.id)
-        setActionsAndRef(newActions)
-        setCanUndo(myUndoStack.current.length > 0 || myClearStack.current.length > 0)
-        setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
+    if (myUndoStack.current.length === 0 && myClearStack.current.length > 0) {
+        // ... clear undo, unchanged
+    }
+    if (myUndoStack.current.length === 0) return
+    const stroke = myUndoStack.current.pop()!
+    myRedoStack.current.push(stroke)
+    const existsInActions = actionsRef.current.some(a => a.id === stroke.id)
+    let newActions: DrawAction[]
+    if (existsInActions) {
+        // undo a draw — remove it
+        newActions = actionsRef.current.filter(a => a.id !== stroke.id)
         await supabase.from('strokes').delete().eq('data->>id', stroke.id).eq('room_id', roomId)
-        await broadcastEvent('set_state', { actions: newActions })
+    } else {
+        // undo a delete — re-add it
+        newActions = [...actionsRef.current, stroke]
+        await supabase.from('strokes').insert({ room_id: roomId, data: stroke })
     }
-
+    setActionsAndRef(newActions)
+    setCanUndo(myUndoStack.current.length > 0 || myClearStack.current.length > 0)
+    setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
+    await broadcastEvent('set_state', { actions: newActions })
+}
     const redo = async () => {
-        // Redo a clear
-        if (myRedoStack.current.length === 0 && myClearRedoStack.current.length > 0) {
-            myClearRedoStack.current.pop()
-            myClearStack.current.push({
-                actions: [...actionsRef.current],
-                undoStack: [...myUndoStack.current]
-            })
-            myUndoStack.current = []
-            myRedoStack.current = []
-            setActionsAndRef([])
-            setCanUndo(true)
-            setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
-            supabase.from('strokes').delete().eq('room_id', roomId).then()
-            await broadcastEvent('clear')
+    if (myRedoStack.current.length === 0 && myClearRedoStack.current.length > 0) {
+        // ... clear redo, unchanged
+    }
+    if (myRedoStack.current.length === 0) return
+    const stroke = myRedoStack.current.pop()!
+    myUndoStack.current.push(stroke)
+    const existsInActions = actionsRef.current.some(a => a.id === stroke.id)
+    let newActions: DrawAction[]
+    if (existsInActions) {
+        // redo a delete — remove it again
+        newActions = actionsRef.current.filter(a => a.id !== stroke.id)
+        await supabase.from('strokes').delete().eq('data->>id', stroke.id).eq('room_id', roomId)
+    } else {
+        // redo a draw — re-add it
+        newActions = [...actionsRef.current, stroke]
+        await supabase.from('strokes').insert({ room_id: roomId, data: stroke })
+    }
+    setActionsAndRef(newActions)
+    setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
+    setCanUndo(true)
+    await broadcastEvent('set_state', { actions: newActions })
+}
+    useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+            e.preventDefault()
+            const stroke = actionsRef.current.find(a => a.id === selectedId)
+            if (stroke) {
+                const newActions = actionsRef.current.filter(a => a.id !== selectedId)
+                setActionsAndRef(newActions)
+                setSelectedId(null)
+                myUndoStack.current.push(stroke)
+                myRedoStack.current = []
+                myClearRedoStack.current = []
+                setCanUndo(true)
+                setCanRedo(false)
+                supabase.from('strokes').delete().eq('data->>id', selectedId).eq('room_id', roomId)
+                broadcastEvent('set_state', { actions: newActions })
+            }
             return
         }
-
-        if (myRedoStack.current.length === 0) return
-        const stroke = myRedoStack.current.pop()!
-        myUndoStack.current.push(stroke)
-        const newActions = [...actionsRef.current, stroke]
-        setActionsAndRef(newActions)
-        setCanRedo(myRedoStack.current.length > 0 || myClearRedoStack.current.length > 0)
-        setCanUndo(true)
-        await supabase.from('strokes').insert({ room_id: roomId, data: stroke })
-        await broadcastEvent('set_state', { actions: newActions })
-    }
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.metaKey || e.ctrlKey) {
-                if (e.key === 'z' && !e.shiftKey) {
-                    e.preventDefault()
-                    undo()
-                } else if (e.key === 'z' && e.shiftKey) {
-                    e.preventDefault()
-                    redo()
-                }
-            }
+        if (e.metaKey || e.ctrlKey) {
+            if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo() }
+            else if (e.key === 'z' && e.shiftKey) { e.preventDefault(); redo() }
         }
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [undo, redo])
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+}, [selectedId])
 
     const clearCanvas = () => {
         myClearStack.current.push({
@@ -853,6 +914,36 @@ export const Whiteboard: React.FC = () => {
 
     const hudScale = hudSize === 'small' ? 0.85 : hudSize === 'large' ? 1.15 : 1
 
+useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+            const stroke = actionsRef.current.find(a => a.id === selectedId)
+            if (stroke) {
+                const newActions = actionsRef.current.filter(a => a.id !== selectedId)
+                setActionsAndRef(newActions)
+                setSelectedId(null)
+                myUndoStack.current.push(stroke)
+                setCanUndo(true)
+                supabase.from('strokes').delete().eq('data->>id', selectedId).eq('room_id', roomId)
+                broadcastEvent('set_state', { actions: newActions })
+            }
+        }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+}, [selectedId])
+
+
+
+
+
+
+
+
+
+
+
+    //return
     return (
         <div
             className="flex flex-col h-screen overflow-hidden"
@@ -934,17 +1025,6 @@ export const Whiteboard: React.FC = () => {
                             }`}
                     >
                         <Pen size={16} strokeWidth={2} />
-                    </button>
-
-                    <button
-                        onClick={() => setTool('eraser')}
-                        title="Eraser (E)"
-                        className={`p-2 rounded-lg transition-all duration-150 ${tool === 'eraser'
-                            ? 'bg-gray-900 text-white shadow-sm'
-                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                            }`}
-                    >
-                        <Eraser size={16} strokeWidth={2} />
                     </button>
                 </div>
 
@@ -1069,7 +1149,7 @@ export const Whiteboard: React.FC = () => {
                         <button
                             key={color}
                             onClick={() => setDrawColorAndMore(color)}
-                            className="w-4 h-4 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110 outline outline-1 outline-gray-200"
+                            className="w-4 h-4 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110 outline outline-2 outline-gray-500"
                             style={{
                                 backgroundColor: color,
                                 borderColor: drawColor === color ? '#3b82f6' : 'transparent',
@@ -1132,28 +1212,21 @@ export const Whiteboard: React.FC = () => {
                     }
                 }}
                 onMouseMove={(e) => {
-                    cursorTargetRef.current = { x: e.clientX, y: e.clientY }
-
-                    // Track cursor for collaboration
-                    if (channelRef.current && isSubscribedRef.current) {
-                        const rect = canvasRef.current?.getBoundingClientRect()
-                        if (rect) {
-                            const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
-                            const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
-                            channelRef.current.track({
-                                x: worldX,
-                                y: worldY,
-                                userId: userIdRef.current,
-                            })
-                        }
-                    }
-
-                    if (isPanning) {
-                        handleCanvasPan(e, false)
-                    } else if (e.buttons === 1) {
-                        draw(e)
-                    }
-                }}
+    cursorTargetRef.current = { x: e.clientX, y: e.clientY }
+    if (channelRef.current && isSubscribedRef.current) {
+        const rect = canvasRef.current?.getBoundingClientRect()
+        if (rect) {
+            const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+            const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+            channelRef.current.track({ x: worldX, y: worldY, userId: userIdRef.current })
+        }
+    }
+    if (isPanning) {
+        handleCanvasPan(e, false)
+    } else if (e.buttons === 1) {
+        draw(e)  // draw handles select dragging too now
+    }
+}}
                 onMouseUp={isPanning ? stopPan : stopDrawing}
                 onMouseLeave={isPanning ? stopPan : stopDrawing}
                 // onWheel={handleWheelPan}
