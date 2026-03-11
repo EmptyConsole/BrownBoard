@@ -1010,7 +1010,7 @@ useEffect(() => {
     //return
     return (
         <div
-            className="flex flex-col h-screen overflow-hidden"
+            className="flex flex-row h-screen overflow-hidden"
             style={{ backgroundColor: colorScheme === 'dark' ? '#1a1a1a' : 'white' }}
         >
             <svg
@@ -1052,213 +1052,325 @@ useEffect(() => {
                     })}
             </svg>
 
-            {/* Header toolbar */}
+            {/* Sidebar toolbar */}
+<div
+    className={`flex flex-col items-center justify-center gap-1 px-2 py-3 border-r shadow-sm select-none ${hideCursorWhileHudClick ? 'cursor-none' : ''}`}
+    style={{
+        zIndex: 5,
+        transform: `scale(${hudScale})`,
+        transformOrigin: 'left center',
+        backgroundColor: colorScheme === 'dark' ? '#1e1e1e' : '#f9fafb',
+        borderColor: colorScheme === 'dark' ? '#333' : '#e5e7eb',
+        color: colorScheme === 'dark' ? 'white' : undefined,
+        minWidth: '52px',
+    }}
+    onMouseEnter={() => setHideCursorWhileHudHover(true)}
+    onMouseLeave={() => setHideCursorWhileHudHover(false)}
+    onMouseDown={() => setHideCursorWhileHudClick(true)}
+>
+    {/* Tool group */}
+    <div className="flex flex-col items-center gap-1 pb-3 border-b border-gray-200 w-full">
+        <button
+            onClick={() => setTool('select')}
+            title="Select (V)"
+            className={`p-2 rounded-lg transition-all duration-150 w-full flex justify-center ${tool === 'select' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
+        >
+            <MousePointer2 size={16} strokeWidth={2} />
+        </button>
+        <button
+            onClick={() => setTool('pen')}
+            title="Pen (P)"
+            className={`p-2 rounded-lg transition-all duration-150 w-full flex justify-center ${tool === 'pen' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
+        >
+            <Pen size={16} strokeWidth={2} />
+        </button>
+    </div>
+{/* Shapes */}
+<div
+    className="relative flex flex-col items-center pb-3 border-b border-gray-200 w-full"
+    onMouseEnter={openShapePanel}
+    onMouseLeave={closeShapePanel}
+    onMouseDown={() => setHideCursorWhileHudClick(true)}
+    onMouseOver={() => setHideCursorWhileHudHover(true)}
+    onMouseOut={() => setHideCursorWhileHudHover(false)}
+>
+    <button
+        onClick={() => setTool('shape')}
+        title="Shapes (drag to draw)"
+        className={`p-2 rounded-lg transition-all duration-150 w-full flex justify-center ${tool === 'shape' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
+    >
+        {React.createElement(shapeIcons[shapeKind], { size: 16, strokeWidth: 2 })}
+    </button>
+    {showShapePanel && (
+        <div
+            className="absolute left-full top-0 ml-2 z-50 bg-white rounded-xl shadow-xl p-3 flex flex-col gap-2 border border-gray-100 min-w-[160px]"
+            onMouseEnter={openShapePanel}
+            onMouseLeave={closeShapePanel}
+            onMouseDown={() => setHideCursorWhileHudClick(true)}
+            onMouseOver={() => setHideCursorWhileHudHover(true)}
+            onMouseOut={() => setHideCursorWhileHudHover(false)}
+        >
+            <div className="grid grid-cols-2 gap-3">
+                {(['rectangle', 'circle', 'star', 'heart'] as const).map((shape) => {
+                    const Icon = shapeIcons[shape]
+                    const active = shapeKind === shape
+                    return (
+                        <button
+                            key={shape}
+                            onClick={() => { setShapeKind(shape); setTool('shape') }}
+                            className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs capitalize transition-all ${active ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}`}
+                        >
+                            <Icon size={16} strokeWidth={2} />
+                            {shape}
+                        </button>
+                    )
+                })}
+            </div>
+            <div className="flex gap-2 border-t border-gray-200 pt-2">
+                <button
+                    onClick={() => setShapeFillMode('outline')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'outline' ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >Outline</button>
+                <button
+                    onClick={() => setShapeFillMode('fill')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'fill' ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >Fill</button>
+            </div>
+        </div>
+    )}
+</div>
+
+{/* Size + Color floating panel — appears to the right when pen or shape active */}
+{(tool === 'pen' || tool === 'shape') && (
+    <div
+        className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-40 bg-white rounded-xl shadow-xl border border-gray-100 p-3 flex flex-col gap-4"
+        style={{ minWidth: '180px' }}
+        onMouseEnter={() => setHideCursorWhileHudHover(true)}
+        onMouseLeave={() => setHideCursorWhileHudHover(false)}
+    >
+        {/* Size */}
+        <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Size</span>
+            <div className="flex items-center gap-2">
+                <Minus
+                    size={12}
+                    className="text-gray-400 hover:text-gray-800 cursor-pointer flex-shrink-0"
+                    onClick={() => resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}
+                />
+                <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={mouseSize}
+                    onChange={(e) => resizeDrawWidth(parseInt(e.target.value))}
+                    className="flex-1 accent-gray-800"
+                    title="Brush size"
+                />
+                <Plus
+                    size={12}
+                    className="text-gray-400 hover:text-gray-800 cursor-pointer flex-shrink-0"
+                    onClick={() => resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}
+                />
+                <span className="text-xs text-gray-400 w-5 text-right tabular-nums">{mouseSize}</span>
+            </div>
+        </div>
+
+        {/* Color */}
+        <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Color</span>
+            <HexColorPicker color={drawColor} onChange={setDrawColorAndMore} style={{ width: '100%', height: '120px' }} />
+            <div className="grid grid-cols-6 gap-1 mt-1">
+                {swatches.map((color) => (
+                    <button
+                        key={color}
+                        onClick={() => setDrawColorAndMore(color)}
+                        className="w-5 h-5 rounded-sm cursor-pointer transition-transform hover:scale-110"
+                        style={{
+                            backgroundColor: color,
+                            outline: drawColor === color ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                        }}
+                    />
+                ))}
+            </div>
+        </div>
+    </div>
+)}
+
+{/* Size + Color — sidebar indicators when select tool */}
+<div className="relative flex flex-col items-center gap-2 py-3 border-b border-gray-200 w-full">
+    <button
+        onClick={() => (tool === 'pen' || tool === 'shape') ? setShowColorPicker(!showColorPicker) : null}
+        className="w-6 h-6 rounded-md border border-gray-200 shadow-inner"
+        style={{ backgroundColor: drawColor }}
+        title="Color"
+    />
+    <span className="text-xs text-gray-400 tabular-nums">{mouseSize}</span>
+</div>
+    {/* Shapes */}
+    {/* <div
+        className="relative flex flex-col items-center pb-3 border-b border-gray-200 w-full"
+        onMouseEnter={openShapePanel}
+        onMouseLeave={closeShapePanel}
+        onMouseDown={() => setHideCursorWhileHudClick(true)}
+        onMouseOver={() => setHideCursorWhileHudHover(true)}
+        onMouseOut={() => setHideCursorWhileHudHover(false)}
+    >
+        <button
+            onClick={() => setTool('shape')}
+            title="Shapes (drag to draw)"
+            className={`p-2 rounded-lg transition-all duration-150 w-full flex justify-center ${tool === 'shape' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
+        >
+            {React.createElement(shapeIcons[shapeKind], { size: 16, strokeWidth: 2 })}
+        </button>
+        {showShapePanel && (
             <div
-                className={`flex items-center justify-center gap-1 px-3 py-2 border-b shadow-sm select-none ${hideCursorWhileHudClick ? 'cursor-none' : ''}`}
-                style={{
-                    zIndex: 5,
-                    transform: `scale(${hudScale})`,
-                    transformOrigin: 'top center',
-                    backgroundColor:
-                        colorScheme === 'dark' ? '#1a1a1a' : colorScheme === 'custom' ? customBg : 'white',
-                    borderColor: colorScheme === 'dark' ? '#333' : undefined,
-                    color: colorScheme === 'dark' ? 'white' : undefined,
-                }}
+                className="absolute left-full top-0 ml-2 z-50 bg-white rounded-xl shadow-xl p-3 flex flex-col gap-2 border border-gray-100 min-w-[160px]"
+                onMouseEnter={openShapePanel}
+                onMouseLeave={closeShapePanel}
+                onMouseDown={() => setHideCursorWhileHudClick(true)}
+                onMouseOver={() => setHideCursorWhileHudHover(true)}
+                onMouseOut={() => setHideCursorWhileHudHover(false)}
+            >
+                <div className="grid grid-cols-2 gap-3">
+                    {(['rectangle', 'circle', 'star', 'heart'] as const).map((shape) => {
+                        const Icon = shapeIcons[shape]
+                        const active = shapeKind === shape
+                        return (
+                            <button
+                                key={shape}
+                                onClick={() => { setShapeKind(shape); setTool('shape') }}
+                                className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs capitalize transition-all ${active ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}`}
+                            >
+                                <Icon size={16} strokeWidth={2} />
+                                {shape}
+                            </button>
+                        )
+                    })}
+                </div>
+                <div className="flex gap-2 border-t border-gray-200 pt-2">
+                    <button
+                        onClick={() => setShapeFillMode('outline')}
+                        className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'outline' ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                        Outline
+                    </button>
+                    <button
+                        onClick={() => setShapeFillMode('fill')}
+                        className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'fill' ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                        Fill
+                    </button>
+                </div>
+            </div>
+        )}
+    </div> */}
+
+    {/* Size group */}
+{/* Size group */}
+{/* <div className="relative flex flex-col items-center gap-2 py-3 border-b border-gray-200 w-full">
+    {(tool === 'pen' || tool === 'shape') && (
+        <div className="absolute left-full top-0 ml-2 z-50 bg-white rounded-xl shadow-xl border border-gray-100 p-3 flex flex-col items-center gap-2"
+            onMouseEnter={() => setHideCursorWhileHudHover(true)}
+            onMouseLeave={() => setHideCursorWhileHudHover(false)}
+        >
+            <Plus
+                size={12}
+                className="text-gray-400 hover:text-gray-800 cursor-pointer"
+                onClick={() => resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}
+            />
+            <input
+                type="range"
+                min="1"
+                max="50"
+                value={mouseSize}
+                onChange={(e) => resizeDrawWidth(parseInt(e.target.value))}
+                className="accent-gray-800"
+                title="Brush size"
+                style={{ writingMode: 'vertical-lr', direction: 'rtl', width: '6px', height: '80px' }}
+            />
+            <Minus
+                size={12}
+                className="text-gray-400 hover:text-gray-800 cursor-pointer"
+                onClick={() => resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}
+            />
+            <span className="text-xs text-gray-400 tabular-nums">{mouseSize}</span>
+        </div>
+    )}
+    <span className="text-xs text-gray-400 tabular-nums">{mouseSize}</span>
+</div> */}
+
+    {/* Color group
+{/* Color group 
+<div className="relative flex flex-col items-center gap-2 py-3 border-b border-gray-200 w-full">
+    <button
+        onClick={() => (tool === 'pen' || tool === 'shape') ? setShowColorPicker(!showColorPicker) : null}
+        className="w-6 h-6 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110"
+        style={{ backgroundColor: drawColor }}
+        title="Color"
+    />
+    {(tool === 'pen' || tool === 'shape') && showColorPicker && (
+        <>
+            <div className="fixed inset-0" onClick={() => setShowColorPicker(false)} />
+            <div className="absolute left-full top-0 ml-2 z-50 bg-white rounded-xl shadow-xl border border-gray-100 p-3 flex flex-col gap-3"
                 onMouseEnter={() => setHideCursorWhileHudHover(true)}
                 onMouseLeave={() => setHideCursorWhileHudHover(false)}
-                onMouseDown={() => setHideCursorWhileHudClick(true)}
             >
-                {/* Tool group */}
-                <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
-                    <button
-                        onClick={() => setTool('select')}
-                        title="Select (V)"
-                        className={`p-2 rounded-lg transition-all duration-150 ${tool === 'select'
-                            ? 'bg-gray-900 text-white shadow-sm'
-                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                            }`}
-                    >
-                        <MousePointer2 size={16} strokeWidth={2} />
-                    </button>
-                    <button
-                        onClick={() => setTool('pen')}
-                        title="Pen (P)"
-                        className={`p-2 rounded-lg transition-all duration-150 ${tool === 'pen'
-                            ? 'bg-gray-900 text-white shadow-sm'
-                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                            }`}
-                    >
-                        <Pen size={16} strokeWidth={2} />
-                    </button>
-                </div>
-
-                {/* Shapes */}
-                <div
-                    className="relative flex items-center px-2 border-r border-gray-200"
-                    onMouseEnter={openShapePanel}
-                    onMouseLeave={closeShapePanel}
-                    onMouseDown={() => setHideCursorWhileHudClick(true)}
-                    onMouseOver={() => setHideCursorWhileHudHover(true)}
-                    onMouseOut={() => setHideCursorWhileHudHover(false)}
-                >
-                    <button
-                        onClick={() => setTool('shape')}
-                        title="Shapes (drag to draw)"
-                        className={`p-2 rounded-lg transition-all duration-150 ${tool === 'shape'
-                            ? 'bg-gray-900 text-white shadow-sm'
-                            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                            }`}
-                    >
-                        {React.createElement(shapeIcons[shapeKind], { size: 16, strokeWidth: 2 })}
-                    </button>
-                    {showShapePanel && (
-                        <div
-                            className="absolute top-10 left-0 z-50 bg-white rounded-xl shadow-xl p-3 flex flex-col gap-2 border border-gray-100 min-w-[160px]"
-                            onMouseEnter={openShapePanel}
-                            onMouseLeave={closeShapePanel}
-                            onMouseDown={() => setHideCursorWhileHudClick(true)}
-                            onMouseOver={() => setHideCursorWhileHudHover(true)}
-                            onMouseOut={() => setHideCursorWhileHudHover(false)}
-                        >
-                            <div className="grid grid-cols-2 gap-3">
-                                {(['rectangle', 'circle', 'star', 'heart'] as const).map((shape) => {
-                                    const Icon = shapeIcons[shape]
-                                    const active = shapeKind === shape
-                                    return (
-                                        <button
-                                            key={shape}
-                                            onClick={() => {
-                                                setShapeKind(shape)
-                                                setTool('shape')
-                                            }}
-                                            className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs capitalize transition-all ${active
-                                                ? 'bg-gray-900 text-white shadow-sm'
-                                                : 'text-gray-600 hover:bg-gray-100'
-                                                }`}
-                                        >
-                                            <Icon size={16} strokeWidth={2} />
-                                            {shape}
-                                        </button>
-                                    )
-                                })}
-                            </div>
-                            <div className="flex gap-2 border-t border-gray-200 pt-2">
-                                <button
-                                    onClick={() => setShapeFillMode('outline')}
-                                    className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'outline'
-                                        ? 'bg-gray-900 text-white shadow-sm'
-                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                        }`}
-                                >
-                                    Outline
-                                </button>
-                                <button
-                                    onClick={() => setShapeFillMode('fill')}
-                                    className={`flex-1 py-1.5 rounded-lg text-xs transition-all ${shapeFillMode === 'fill'
-                                        ? 'bg-gray-900 text-white shadow-sm'
-                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                        }`}
-                                >
-                                    Fill
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* Size group */}
-                <div className="flex items-center gap-2 px-3 border-r border-gray-200">
-                    <Minus
-                        size={12}
-                        className="text-gray-400 hover:bg-gray-100 hover:text-gray-800"
-                        onClick={() => resizeDrawWidth(clamp(mouseSize - 1, 1, 50))}
-                    />
-                    <input
-                        type="range"
-                        min="1"
-                        max="50"
-                        value={mouseSize}
-                        onChange={(e) => resizeDrawWidth(parseInt(e.target.value))}
-                        className="w-20 accent-gray-800"
-                        title="Brush size"
-                    />
-                    <Plus
-                        size={12}
-                        className="text-gray-400 hover:bg-gray-100 hover:text-gray-800"
-                        onClick={() => resizeDrawWidth(clamp(mouseSize + 1, 1, 50))}
-                    />
-                    <span className="text-xs text-gray-400 w-5 text-right tabular-nums">{mouseSize}</span>
-                </div>
-
-                {/* Color group */}
-                <div className="relative flex items-center gap-2 px-3 border-r border-gray-200">
-                    <button
-                        onClick={() => setShowColorPicker(!showColorPicker)}
-                        className="w-6 h-6 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110"
-                        style={{ backgroundColor: drawColor }}
-                        title="Color"
-                    />
-                    {showColorPicker && (
-                        <>
-                            {/* backdrop to close on click outside */}
-                            <div className="fixed inset-0" onClick={() => setShowColorPicker(false)} />
-                            <div className="absolute top-10 left-0 z-50 rounded-xl shadow-xl overflow-hidden">
-                                <HexColorPicker color={drawColor} onChange={setDrawColorAndMore} />
-                            </div>
-                        </>
-                    )}
-                </div>
-                <div className="grid grid-cols-6 gap-2 p-3">
+                <HexColorPicker color={drawColor} onChange={setDrawColorAndMore} />
+                <div className="grid grid-cols-6 gap-1">
                     {swatches.map((color) => (
                         <button
                             key={color}
                             onClick={() => setDrawColorAndMore(color)}
-                            className="w-4 h-4 rounded-md cursor-pointer border border-gray-200 shadow-inner transition-transform hover:scale-110 outline outline-2 outline-gray-500"
+                            className="w-4 h-4 rounded-sm cursor-pointer transition-transform hover:scale-110"
                             style={{
                                 backgroundColor: color,
-                                borderColor: drawColor === color ? '#3b82f6' : 'transparent',
+                                outline: drawColor === color ? '2px solid #3b82f6' : '1px solid #e5e7eb',
                             }}
                         />
                     ))}
                 </div>
-                {/* Actions */}
-                <div className="flex items-center gap-1 pl-1">
-                    <button
-                        onClick={clearCanvas}
-                        title="Clear canvas"
-                        className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150"
-                    >
-                        <Trash2 size={16} strokeWidth={2} />
-                    </button>
-                </div>
-                <div className="flex items-center gap-1 px-3 border-r border-gray-200">
-                    <button
-                        onClick={undo}
-                        disabled={!canUndo}
-                        title="Undo (⌘Z)"
-                        className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
-                    >
-                        <Undo2 size={16} strokeWidth={2} />
-                    </button>
-                    <button
-                        onClick={redo}
-                        disabled={!canRedo}
-                        title="Redo (⌘⇧Z)"
-                        className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150"
-                    >
-                        <Redo2 size={16} strokeWidth={2} />
-                    </button>
-                </div>
-                <div className="flex items-center top-2 right-4">
-                    <button
-                        onClick={() => setShowSettings(true)}
-                        title="Settings"
-                        className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all duration-150"
-                    >
-                        <Settings size={16} strokeWidth={2} />
-                    </button>
-                </div>
             </div>
+        </>
+    )}
+</div> */}
+    {/* Actions */}
+    <div className="flex flex-col items-center gap-1 py-3 border-b border-gray-200 w-full">
+        <button
+            onClick={undo}
+            disabled={!canUndo}
+            title="Undo (⌘Z)"
+            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150 w-full flex justify-center"
+        >
+            <Undo2 size={16} strokeWidth={2} />
+        </button>
+        <button
+            onClick={redo}
+            disabled={!canRedo}
+            title="Redo (⌘⇧Z)"
+            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-25 disabled:cursor-not-allowed transition-all duration-150 w-full flex justify-center"
+        >
+            <Redo2 size={16} strokeWidth={2} />
+        </button>
+        <button
+            onClick={clearCanvas}
+            title="Clear canvas"
+            className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all duration-150 w-full flex justify-center"
+        >
+            <Trash2 size={16} strokeWidth={2} />
+        </button>
+    </div>
+
+    {/* Settings */}
+    <div className="flex flex-col items-center gap-1 pt-3 w-full">
+        <button
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-all duration-150 w-full flex justify-center"
+        >
+            <Settings size={16} strokeWidth={2} />
+        </button>
+    </div>
+</div>
 
             <canvas
                 ref={canvasRef}
@@ -1301,7 +1413,7 @@ useEffect(() => {
                     e.preventDefault()
                     return false
                 }}
-                className="flex-1 cursor-crosshair bg-white"
+                className="flex-1 h-full cursor-crosshair"
             />
             {tool === 'select' && (
                 <div
@@ -1315,7 +1427,7 @@ useEffect(() => {
                         zIndex: 1000,
                     }}
                 >
-                    <MousePointer2 size={24} color={colorScheme === 'dark' ? 'white' : 'black'} />{' '}
+                    <MousePointer2 size={24} color={colorScheme === 'dark' ? 'white' : 'black'} style={{ fill: colorScheme === 'dark' ? 'black' : 'white' }} />{' '}
                     {/* Customize size and color */}
                 </div>
             )}
