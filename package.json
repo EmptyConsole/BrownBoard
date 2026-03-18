@@ -23,12 +23,13 @@
     "react": "^19.2.0",
     "react-colorful": "^5.6.1",
     "react-dom": "^19.2.0",
+    "supabase": "^2.81.3",
     "uuid": "^13.0.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/cli": "^7.6.1",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.2.1",
     "@types/electron": "^1.4.38",
