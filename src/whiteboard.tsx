@@ -69,7 +69,7 @@ export const Whiteboard: React.FC = () => {
   const myRedoStack = useRef<DrawAction[]>([]) // strokes I can redo
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
-  const [showColorPicker, setShowColorPicker] = useState(false)
+  // const [showColorPicker, setShowColorPicker] = useState(false)
   const swatches = [
     '#0a0a0a',
     '#ffffff',
@@ -105,10 +105,11 @@ export const Whiteboard: React.FC = () => {
     bbox: BBox
     snapshots: DrawAction[]
   } | null>(null)
-  const [openPanel, setOpenPanel] = useState<'color' | null>(null)
+  // const [openPanel, setOpenPanel] = useState<'color' | null>(null)
   const [cursorColor, setCursorColor] = useState('#000000')
   const otherCursorColors = useRef<Map<string, string>>(new Map())
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [hoveredHandle, setHoveredHandle] = useState<string | null>(null)
 
   //SETTINGS
   const [showSettings, setShowSettings] = useState(false)
@@ -125,7 +126,7 @@ export const Whiteboard: React.FC = () => {
   const [showShapePanel, setShowShapePanel] = useState(false)
   const shapeHoverTimeout = useRef<number | null>(null)
   const [hideCursorWhileHudClick, setHideCursorWhileHudClick] = useState(false)
-  const [hideCursorWhileHudHover, setHideCursorWhileHudHover] = useState(false)
+  // const [hideCursorWhileHudHover, setHideCursorWhileHudHover] = useState(false)
   const prevBodyCursor = useRef<string>('')
 
   const shapeIcons: Record<
@@ -570,12 +571,14 @@ export const Whiteboard: React.FC = () => {
         ctx.restore()
         const hs = HANDLE_SIZE / scale
         ctx.save()
-        ctx.fillStyle = 'white'
-        ctx.strokeStyle = '#3b82f6'
         ctx.lineWidth = 1.5 / scale
         for (const h of getResizeHandles(bbox)) {
-          ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
-          ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs)
+          const isHovered = hoveredHandle === h.id
+          ctx.fillStyle = isHovered ? '#3b82f6' : 'white'
+          ctx.strokeStyle = '#3b82f6'
+          const size = isHovered ? hs * 1.4 : hs
+          ctx.fillRect(h.x - size / 2, h.y - size / 2, size, size)
+          ctx.strokeRect(h.x - size / 2, h.y - size / 2, size, size)
         }
         ctx.restore()
       }
@@ -601,6 +604,7 @@ export const Whiteboard: React.FC = () => {
     selectedIds,
     marquee,
     hoveredId,
+    hoveredHandle,
   ])
 
   // resize listener that updates canvasSize from the element’s
@@ -641,9 +645,9 @@ export const Whiteboard: React.FC = () => {
             maxX: multiBbox.maxX + pad,
             maxY: multiBbox.maxY + pad,
           }
-          const hs = HANDLE_SIZE / scaleRef.current
+          const screenTolerance = 12 / scaleRef.current
           for (const h of getResizeHandles(paddedBbox)) {
-            if (Math.abs(x - h.x) < hs && Math.abs(y - h.y) < hs) {
+            if (Math.abs(x - h.x) < screenTolerance && Math.abs(y - h.y) < screenTolerance) {
               setIsResizingSelection(h.id)
               resizeStartRef.current = {
                 x,
@@ -676,6 +680,7 @@ export const Whiteboard: React.FC = () => {
       marqueeStartRef.current = { x, y }
       setMarquee({ x, y, w: 0, h: 0 })
       setSelectedIds(new Set())
+      setHoveredHandle(null)
       return
     }
 
@@ -767,8 +772,31 @@ export const Whiteboard: React.FC = () => {
           h: Math.abs(y - my),
         })
       } else {
+        // Check resize handle hover first (fixed 12px screen-space tolerance)
+        let foundHandle: string | null = null
+        if (selectedIds.size > 0) {
+          const selectedActions = actions.filter((a) => a.id && selectedIds.has(a.id))
+          const multiBbox = getMultiBBox(selectedActions)
+          if (multiBbox) {
+            const pad = 10
+            const paddedBbox = {
+              minX: multiBbox.minX - pad,
+              minY: multiBbox.minY - pad,
+              maxX: multiBbox.maxX + pad,
+              maxY: multiBbox.maxY + pad,
+            }
+            const screenTolerance = 12 / scaleRef.current
+            for (const h of getResizeHandles(paddedBbox)) {
+              if (Math.abs(x - h.x) < screenTolerance && Math.abs(y - h.y) < screenTolerance) {
+                foundHandle = h.id
+                break
+              }
+            }
+          }
+        }
+        setHoveredHandle(foundHandle)
         // Hover detection — find topmost stroke under cursor
-        const hit = [...actions].reverse().find((a) => a.id && pointInBBox(x, y, getBBox(a), 8))
+        const hit = foundHandle ? null : [...actions].reverse().find((a) => a.id && pointInBBox(x, y, getBBox(a), 8))
         setHoveredId(hit?.id ?? null)
       }
       return
@@ -870,6 +898,12 @@ export const Whiteboard: React.FC = () => {
     setCanUndo(true)
     setCanRedo(false)
     supabase.from('strokes').insert({ room_id: roomId, data: action }).then()
+
+    // Auto-select the newly drawn shape and switch to select tool
+    if (action.type === 'shape' && action.id) {
+      setSelectedIds(new Set([action.id]))
+      setTool('select')
+    }
   }
 
   const snapPoint = (x: number, y: number) => {
@@ -1247,15 +1281,17 @@ export const Whiteboard: React.FC = () => {
     <div className="flex h-screen overflow-hidden" style={{ cursor: 'none' }}>
       {/* Full-screen canvas */}
       <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          touchAction: 'none',
-          cursor: 'none',
-        }}
+  ref={canvasRef}
+  style={{         // ← replace the whole style={{ ... }} block here
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    touchAction: 'none',
+    cursor: hoveredHandle
+      ? (hoveredHandle === 'nw' || hoveredHandle === 'se' ? 'nw-resize' : 'ne-resize')
+      : 'none',
+  }}
         onMouseDown={(e) => {
           if (e.button === 2) handleCanvasPan(e, true)
           else if (e.button === 0) startDrawing(e)
@@ -1312,7 +1348,7 @@ export const Whiteboard: React.FC = () => {
       </svg>
 
       {/* Custom cursor — only on canvas, hidden when over any popup/footer */}
-      {!hideCursorWhileHudClick && (
+      {!hideCursorWhileHudClick && !hoveredHandle && (
         <div
           className="pointer-events-none fixed"
           style={{
@@ -1323,11 +1359,30 @@ export const Whiteboard: React.FC = () => {
           }}
         >
           {tool === 'select' ? (
+            hoveredHandle ? (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 20 20"
+                style={{
+                  transform: hoveredHandle === 'nw' || hoveredHandle === 'se'
+                    ? 'rotate(0deg)'
+                    : 'rotate(90deg)',
+                  filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
+                }}
+              >
+                {/* Double-headed diagonal arrow */}
+                <line x1="3" y1="3" x2="17" y2="17" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round"/>
+                <polyline points="3,9 3,3 9,3" fill="none" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <polyline points="17,11 17,17 11,17" fill="none" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
             <MousePointer2
               size={22}
               color={cursorColor}
               style={{ fill: cursorColor === '#ffffff' ? 'black' : 'white' }}
             />
+            )
           ) : cursorStyle === 'dot' ? (
             <div
               className="w-1.5 h-1.5 rounded-full bg-black"

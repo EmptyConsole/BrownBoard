@@ -5,26 +5,6 @@ Use vectors for prototyping
 
 # Steps:
 
-# Initial WhiteBoard
-
-    Draw - Done
-    Erase - Done
-    Clear - Done
-    Colors - Done
-    Resize Cursor - Done
-    Movement of Page - Done
-    Zoom In - Done
-    Zoom Out - Done
-    Whiteboard UI - Done
-    IF YOU HOLD SHIFT - Done
-        stright line aligned to grid - Done
-    IF YOU HOLD OPTION - Done
-        stright line from mouse to start - Done
-
-    GUYS NEW STUFF
-        IN SETTING
-        you need to be able to choose header color
-
 # Project Management
 
     Backlog
