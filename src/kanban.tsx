@@ -1,8 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 
-type TaskStatus = 'not_started' | 'in_progress' | 'completed'
+type DefaultStatus = 'not_started' | 'in_progress' | 'completed' | 'tabled'
+type DefaultUrgency = 'critical' | 'high' | 'medium' | 'low' | 'tabled'
+type TaskStatus = DefaultStatus | string
+type TaskUrgency = DefaultUrgency | string
+type TaskOptionType = 'status' | 'urgency'
+
+interface TaskOption {
+  id?: string
+  value: string
+  label: string
+  color: string
+  badgeClass?: string
+  dotClass?: string
+  type: TaskOptionType
+  isCustom?: boolean
+}
 
 type DbCategory = {
   id: string
@@ -15,6 +30,7 @@ type DbTask = {
   title: string
   description: string | null
   status: TaskStatus
+  urgency?: TaskUrgency | null
   category_id: string
   position: number | null
 }
@@ -24,6 +40,7 @@ interface Task {
   title: string
   description: string
   status: TaskStatus
+  urgency: TaskUrgency
   categoryId: string
   position: number
 }
@@ -35,10 +52,127 @@ interface Category {
   tasks: Task[]
 }
 
-const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string; badge: string; dot: string }> = [
-  { value: 'not_started', label: 'Not started', badge: 'bg-gray-200 text-gray-700', dot: 'bg-gray-500' },
-  { value: 'in_progress', label: 'In progress', badge: 'bg-amber-100 text-amber-800', dot: 'bg-amber-500' },
-  { value: 'completed', label: 'Completed', badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
+const toTitleCase = (value: string) =>
+  value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+
+const slugify = (value: string) => {
+  const base = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return base || `custom_${Date.now()}`
+}
+
+const hexToRgba = (hex: string, alpha: number) => {
+  let clean = hex.replace('#', '')
+  if (clean.length === 3) {
+    clean = clean
+      .split('')
+      .map((c) => c + c)
+      .join('')
+  }
+  if (clean.length !== 6) return `rgba(107, 114, 128, ${alpha})`
+  const num = parseInt(clean, 16)
+  const r = (num >> 16) & 255
+  const g = (num >> 8) & 255
+  const b = num & 255
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+const getContrastTextColor = (hex: string) => {
+  let clean = hex.replace('#', '')
+  if (clean.length === 3) {
+    clean = clean
+      .split('')
+      .map((c) => c + c)
+      .join('')
+  }
+  if (clean.length !== 6) return '#111827'
+  const num = parseInt(clean, 16)
+  const r = (num >> 16) & 255
+  const g = (num >> 8) & 255
+  const b = num & 255
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.6 ? '#111827' : '#ffffff'
+}
+
+const DEFAULT_STATUS_OPTIONS: TaskOption[] = [
+  {
+    value: 'not_started',
+    label: 'Not started',
+    color: '#6b7280',
+    badgeClass: 'bg-gray-200 text-gray-700',
+    dotClass: 'bg-gray-500',
+    type: 'status',
+  },
+  {
+    value: 'in_progress',
+    label: 'In progress',
+    color: '#f59e0b',
+    badgeClass: 'bg-amber-100 text-amber-800',
+    dotClass: 'bg-amber-500',
+    type: 'status',
+  },
+  {
+    value: 'completed',
+    label: 'Completed',
+    color: '#10b981',
+    badgeClass: 'bg-emerald-100 text-emerald-800',
+    dotClass: 'bg-emerald-500',
+    type: 'status',
+  },
+  {
+    value: 'tabled',
+    label: 'Tabled',
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-100 text-blue-800',
+    dotClass: 'bg-blue-500',
+    type: 'status',
+  },
+]
+
+const DEFAULT_URGENCY_OPTIONS: TaskOption[] = [
+  {
+    value: 'critical',
+    label: 'Critical',
+    color: '#ef4444',
+    badgeClass: 'bg-red-100 text-red-800',
+    dotClass: 'bg-red-500',
+    type: 'urgency',
+  },
+  {
+    value: 'high',
+    label: 'High',
+    color: '#f97316',
+    badgeClass: 'bg-orange-100 text-orange-800',
+    dotClass: 'bg-orange-500',
+    type: 'urgency',
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    color: '#eab308',
+    badgeClass: 'bg-yellow-100 text-yellow-800',
+    dotClass: 'bg-yellow-500',
+    type: 'urgency',
+  },
+  {
+    value: 'low',
+    label: 'Low',
+    color: '#22c55e',
+    badgeClass: 'bg-green-100 text-green-800',
+    dotClass: 'bg-green-500',
+    type: 'urgency',
+  },
+  {
+    value: 'tabled',
+    label: 'Tabled',
+    color: '#3b82f6',
+    badgeClass: 'bg-blue-100 text-blue-800',
+    dotClass: 'bg-blue-500',
+    type: 'urgency',
+  },
 ]
 
 const mapTask = (task: DbTask): Task => ({
@@ -46,6 +180,7 @@ const mapTask = (task: DbTask): Task => ({
   title: task.title,
   description: task.description || '',
   status: task.status,
+  urgency: task.urgency ?? 'medium',
   categoryId: task.category_id,
   position: task.position ?? 0,
 })
@@ -76,6 +211,7 @@ export const KanbanBoard: React.FC = () => {
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newTaskInputs, setNewTaskInputs] = useState<Record<string, string>>({})
   const [statusMenu, setStatusMenu] = useState<{ taskId: string; categoryId: string } | null>(null)
+  const [urgencyMenu, setUrgencyMenu] = useState<{ taskId: string; categoryId: string } | null>(null)
   const [draggedTask, setDraggedTask] = useState<{ taskId: string; fromCategoryId: string } | null>(null)
   const [editingTask, setEditingTask] = useState<{
     taskId: string
@@ -83,6 +219,17 @@ export const KanbanBoard: React.FC = () => {
     title: string
     description: string
   } | null>(null)
+  const [customStatusOptions, setCustomStatusOptions] = useState<TaskOption[]>([])
+  const [customUrgencyOptions, setCustomUrgencyOptions] = useState<TaskOption[]>([])
+  const [addOptionForm, setAddOptionForm] = useState<{
+    open: boolean
+    type: TaskOptionType
+    label: string
+    color: string
+    anchorTaskId?: string
+    anchorCategoryId?: string
+  }>({ open: false, type: 'status', label: '', color: '#3b82f6' })
+  const [savingOption, setSavingOption] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -91,7 +238,82 @@ export const KanbanBoard: React.FC = () => {
     [categories],
   )
 
-  const loadBoard = async () => {
+  const mapOptionRow = (row: any): TaskOption => ({
+    id: row.id,
+    value: row.value,
+    label: row.label,
+    color: row.color || '#6b7280',
+    type: row.type as TaskOptionType,
+    isCustom: true,
+  })
+
+  const loadTaskOptions = useCallback(async () => {
+    const { data, error: optionsError } = await supabase
+      .from('task_options')
+      .select('*')
+      .order('created_at', { ascending: true })
+
+    if (optionsError) {
+      setError(optionsError.message)
+      return
+    }
+
+    if (data) {
+      const defaultStatusValues = new Set(DEFAULT_STATUS_OPTIONS.map((o) => o.value))
+      const defaultUrgencyValues = new Set(DEFAULT_URGENCY_OPTIONS.map((o) => o.value))
+      const customStatus = data.filter((row) => row.type === 'status' && !defaultStatusValues.has(row.value)).map(mapOptionRow)
+      const customUrgency = data
+        .filter((row) => row.type === 'urgency' && !defaultUrgencyValues.has(row.value))
+        .map(mapOptionRow)
+
+      setCustomStatusOptions(customStatus)
+      setCustomUrgencyOptions(customUrgency)
+    }
+  }, [])
+
+  const statusOptions = useMemo(
+    () => [...DEFAULT_STATUS_OPTIONS, ...customStatusOptions],
+    [customStatusOptions],
+  )
+
+  const urgencyOptions = useMemo(
+    () => [...DEFAULT_URGENCY_OPTIONS, ...customUrgencyOptions],
+    [customUrgencyOptions],
+  )
+
+  const resetAddOptionForm = useCallback(() => {
+    setAddOptionForm({ open: false, type: 'status', label: '', color: '#3b82f6' })
+    setSavingOption(false)
+  }, [])
+
+  const ensureOption = useCallback(
+    (options: TaskOption[], value: string | null | undefined, type: TaskOptionType): TaskOption => {
+      if (!value) return { value: '', label: 'Unknown', color: '#6b7280', type }
+      const found = options.find((o) => o.value === value)
+      if (found) return found
+      return {
+        value,
+        label: toTitleCase(value),
+        color: '#6b7280',
+        type,
+        isCustom: true,
+      }
+    },
+    [],
+  )
+
+  const getBadgeClass = (option: TaskOption) => option.badgeClass ?? ''
+  const getBadgeStyle = (option: TaskOption) =>
+    option.badgeClass
+      ? undefined
+      : {
+          backgroundColor: hexToRgba(option.color, 0.16),
+          color: getContrastTextColor(option.color),
+        }
+  const getDotClass = (option: TaskOption) => option.dotClass ?? ''
+  const getDotStyle = (option: TaskOption) => (option.dotClass ? undefined : { backgroundColor: option.color })
+
+  const loadBoard = useCallback(async () => {
     setLoading(true)
     setError(null)
     const [{ data: categoryData, error: categoryError }, { data: taskData, error: taskError }] = await Promise.all([
@@ -107,11 +329,12 @@ export const KanbanBoard: React.FC = () => {
 
     setCategories(buildBoard(categoryData || [], taskData || []))
     setLoading(false)
-  }
+  }, [])
 
   useEffect(() => {
     loadBoard()
-  }, [])
+    loadTaskOptions()
+  }, [loadBoard, loadTaskOptions])
 
   const addCategory = async () => {
     const trimmed = newCategoryName.trim()
@@ -144,7 +367,7 @@ export const KanbanBoard: React.FC = () => {
 
     const { data, error: insertError } = await supabase
       .from('tasks')
-      .insert({ title, status: 'not_started', category_id: categoryId, position })
+      .insert({ title, status: 'not_started', urgency: 'medium', category_id: categoryId, position })
       .select()
       .single()
 
@@ -182,6 +405,80 @@ export const KanbanBoard: React.FC = () => {
     }
 
     setStatusMenu(null)
+  }
+
+  const updateTaskUrgency = async (categoryId: string, taskId: string, urgency: TaskUrgency) => {
+    setCategories((prev) =>
+      prev.map((cat) =>
+        cat.id === categoryId
+          ? { ...cat, tasks: cat.tasks.map((t) => (t.id === taskId ? { ...t, urgency } : t)) }
+          : cat,
+      ),
+    )
+
+    const { error: updateError } = await supabase.from('tasks').update({ urgency }).eq('id', taskId)
+    if (updateError) {
+      setError(updateError.message)
+      loadBoard()
+    }
+
+    setUrgencyMenu(null)
+  }
+
+  const openAddOptionForm = (type: TaskOptionType, categoryId: string, taskId: string) => {
+    setAddOptionForm({
+      open: true,
+      type,
+      label: '',
+      color: '#3b82f6',
+      anchorCategoryId: categoryId,
+      anchorTaskId: taskId,
+    })
+  }
+
+  const saveNewOption = async () => {
+    if (!addOptionForm.open) return
+    const trimmedLabel = addOptionForm.label.trim()
+    if (!trimmedLabel) return
+    const color = addOptionForm.color || '#3b82f6'
+    setSavingOption(true)
+
+    const { data, error: insertError } = await supabase
+      .from('task_options')
+      .insert({
+        type: addOptionForm.type,
+        value: slugify(trimmedLabel),
+        label: trimmedLabel,
+        color,
+      })
+      .select()
+      .single()
+
+    if (insertError) {
+      setError(insertError.message)
+      setSavingOption(false)
+      return
+    }
+
+    const mapped = data ? mapOptionRow(data) : null
+    if (mapped) {
+      if (mapped.type === 'status') {
+        setCustomStatusOptions((prev) => [...prev, mapped])
+      } else {
+        setCustomUrgencyOptions((prev) => [...prev, mapped])
+      }
+
+      if (addOptionForm.anchorCategoryId && addOptionForm.anchorTaskId) {
+        if (mapped.type === 'status') {
+          updateTaskStatus(addOptionForm.anchorCategoryId, addOptionForm.anchorTaskId, mapped.value)
+        } else {
+          updateTaskUrgency(addOptionForm.anchorCategoryId, addOptionForm.anchorTaskId, mapped.value as TaskUrgency)
+        }
+      }
+    }
+
+    setSavingOption(false)
+    resetAddOptionForm()
   }
 
   const updateTaskDetails = async (categoryId: string, taskId: string, title: string, description: string) => {
@@ -234,6 +531,7 @@ export const KanbanBoard: React.FC = () => {
     })
     setEditingTask((prev) => (prev?.categoryId === categoryId ? null : prev))
     setStatusMenu((prev) => (prev?.categoryId === categoryId ? null : prev))
+    setUrgencyMenu((prev) => (prev?.categoryId === categoryId ? null : prev))
 
     const { error: deleteTasksError } = await supabase.from('tasks').delete().eq('category_id', categoryId)
     if (deleteTasksError) {
@@ -452,7 +750,8 @@ export const KanbanBoard: React.FC = () => {
               >
                 {category.tasks.map((task) => {
                   const isEditing = editingTask?.taskId === task.id && editingTask?.categoryId === category.id
-                  const statusMeta = STATUS_OPTIONS.find((s) => s.value === task.status)
+                  const statusMeta = ensureOption(statusOptions, task.status, 'status')
+                  const urgencyMeta = ensureOption(urgencyOptions, task.urgency, 'urgency')
 
                   return (
                     <div
@@ -471,21 +770,51 @@ export const KanbanBoard: React.FC = () => {
                             {statusMeta && (
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
+                                  setUrgencyMenu(null)
                                   setStatusMenu((prev) =>
                                     prev?.taskId === task.id && prev?.categoryId === category.id
                                       ? null
                                       : { taskId: task.id, categoryId: category.id },
                                   )
-                                }
-                                className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-full transition-colors ${statusMeta.badge} hover:brightness-95`}
+                                }}
+                                className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-full transition-colors hover:brightness-95 ${getBadgeClass(statusMeta)}`}
+                                style={getBadgeStyle(statusMeta)}
                                 title="Change status"
                               >
-                                <span className={`inline-block h-2 w-2 rounded-full ${statusMeta.dot}`} />
+                                <span
+                                  className={`inline-block h-2 w-2 rounded-full ${getDotClass(statusMeta)}`}
+                                  style={getDotStyle(statusMeta)}
+                                />
                                 {statusMeta.label}
                               </button>
                             )}
                           </div>
+                          {urgencyMeta && (
+                            <div className="flex items-start justify-between gap-2 mt-2">
+                              <span className="text-[11px] text-gray-500">Urgency</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStatusMenu(null)
+                                  setUrgencyMenu((prev) =>
+                                    prev?.taskId === task.id && prev?.categoryId === category.id
+                                      ? null
+                                      : { taskId: task.id, categoryId: category.id },
+                                  )
+                                }}
+                                className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-full transition-colors hover:brightness-95 ${getBadgeClass(urgencyMeta)}`}
+                                style={getBadgeStyle(urgencyMeta)}
+                                title="Change urgency"
+                              >
+                                <span
+                                  className={`inline-block h-2 w-2 rounded-full ${getDotClass(urgencyMeta)}`}
+                                  style={getDotStyle(urgencyMeta)}
+                                />
+                                {urgencyMeta.label}
+                              </button>
+                            </div>
+                          )}
                           {task.description && (
                             <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{task.description}</p>
                           )}
@@ -517,7 +846,7 @@ export const KanbanBoard: React.FC = () => {
                             <div className="absolute right-2 top-10 z-20 w-44 rounded-md border border-gray-200 bg-white shadow-md">
                               <div className="px-3 py-2 text-xs font-semibold text-gray-500">Set status</div>
                               <div className="flex flex-col divide-y divide-gray-100">
-                                {STATUS_OPTIONS.map((option) => (
+                                {statusOptions.map((option) => (
                                   <button
                                     key={option.value}
                                     onClick={() => updateTaskStatus(category.id, task.id, option.value)}
@@ -526,13 +855,162 @@ export const KanbanBoard: React.FC = () => {
                                     }`}
                                   >
                                     <span className="flex items-center gap-2">
-                                      <span className={`h-2 w-2 rounded-full ${option.dot}`} />
+                                      <span
+                                        className={`h-2 w-2 rounded-full ${getDotClass(option)}`}
+                                        style={getDotStyle(option)}
+                                      />
                                       {option.label}
                                     </span>
                                     {task.status === option.value && <span className="text-[10px]">Selected</span>}
                                   </button>
                                 ))}
+                                <button
+                                  onClick={() => openAddOptionForm('status', category.id, task.id)}
+                                  className="flex items-center justify-between px-3 py-2 text-left text-xs text-blue-600 hover:bg-blue-50"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <Plus size={12} />
+                                    Add status
+                                  </span>
+                                </button>
+                                <button
+                                  onClick={() => setStatusMenu(null)}
+                                  className="flex items-center justify-between px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+                                >
+                                  <span className="flex items-center gap-2">Cancel</span>
+                                </button>
                               </div>
+                              {addOptionForm.open &&
+                                addOptionForm.type === 'status' &&
+                                addOptionForm.anchorTaskId === task.id &&
+                                addOptionForm.anchorCategoryId === category.id && (
+                                  <div className="absolute left-full top-0 ml-2 w-56 rounded-md border border-gray-200 bg-white shadow-md p-3">
+                                    <p className="text-xs font-semibold text-gray-700 mb-2">Add status</p>
+                                    <div className="space-y-2">
+                                      <input
+                                        type="text"
+                                        value={addOptionForm.label}
+                                        onChange={(e) => setAddOptionForm((prev) => ({ ...prev, label: e.target.value }))}
+                                        placeholder="Status name"
+                                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
+                                      />
+                                      <label className="flex items-center justify-between text-xs text-gray-600">
+                                        <span>Color</span>
+                                        <input
+                                          type="color"
+                                          value={addOptionForm.color}
+                                          onChange={(e) => setAddOptionForm((prev) => ({ ...prev, color: e.target.value }))}
+                                          className="h-7 w-12 cursor-pointer border border-gray-200 rounded"
+                                        />
+                                      </label>
+                                      <div className="flex justify-end gap-2 pt-1">
+                                        <button
+                                          onClick={resetAddOptionForm}
+                                          className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          onClick={saveNewOption}
+                                          disabled={savingOption || addOptionForm.label.trim().length === 0}
+                                          className={`px-2 py-1 text-xs rounded ${
+                                            savingOption || addOptionForm.label.trim().length === 0
+                                              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                                          }`}
+                                        >
+                                          Done
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                            </div>
+                          )}
+
+                          {urgencyMenu?.taskId === task.id && urgencyMenu?.categoryId === category.id && (
+                            <div className="absolute right-2 top-28 z-20 w-44 rounded-md border border-gray-200 bg-white shadow-md">
+                              <div className="px-3 py-2 text-xs font-semibold text-gray-500">Set urgency</div>
+                              <div className="flex flex-col divide-y divide-gray-100">
+                                {urgencyOptions.map((option) => (
+                                  <button
+                                    key={option.value}
+                                    onClick={() => updateTaskUrgency(category.id, task.id, option.value)}
+                                    className={`flex items-center justify-between px-3 py-2 text-left text-xs hover:bg-gray-50 ${
+                                      task.urgency === option.value ? 'text-blue-600 font-semibold' : 'text-gray-700'
+                                    }`}
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <span
+                                        className={`h-2 w-2 rounded-full ${getDotClass(option)}`}
+                                        style={getDotStyle(option)}
+                                      />
+                                      {option.label}
+                                    </span>
+                                    {task.urgency === option.value && <span className="text-[10px]">Selected</span>}
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={() => openAddOptionForm('urgency', category.id, task.id)}
+                                  className="flex items-center justify-between px-3 py-2 text-left text-xs text-blue-600 hover:bg-blue-50"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <Plus size={12} />
+                                    Add status
+                                  </span>
+                                </button>
+                                <button
+                                  onClick={() => setUrgencyMenu(null)}
+                                  className="flex items-center justify-between px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+                                >
+                                  <span className="flex items-center gap-2">Cancel</span>
+                                </button>
+                              </div>
+                              {addOptionForm.open &&
+                                addOptionForm.type === 'urgency' &&
+                                addOptionForm.anchorTaskId === task.id &&
+                                addOptionForm.anchorCategoryId === category.id && (
+                                  <div className="absolute left-full top-0 ml-2 w-56 rounded-md border border-gray-200 bg-white shadow-md p-3">
+                                    <p className="text-xs font-semibold text-gray-700 mb-2">Add status</p>
+                                    <div className="space-y-2">
+                                      <input
+                                        type="text"
+                                        value={addOptionForm.label}
+                                        onChange={(e) => setAddOptionForm((prev) => ({ ...prev, label: e.target.value }))}
+                                        placeholder="Status name"
+                                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:border-blue-500"
+                                      />
+                                      <label className="flex items-center justify-between text-xs text-gray-600">
+                                        <span>Color</span>
+                                        <input
+                                          type="color"
+                                          value={addOptionForm.color}
+                                          onChange={(e) => setAddOptionForm((prev) => ({ ...prev, color: e.target.value }))}
+                                          className="h-7 w-12 cursor-pointer border border-gray-200 rounded"
+                                        />
+                                      </label>
+                                      <div className="flex justify-end gap-2 pt-1">
+                                        <button
+                                          onClick={resetAddOptionForm}
+                                          className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          onClick={saveNewOption}
+                                          disabled={savingOption || addOptionForm.label.trim().length === 0}
+                                          className={`px-2 py-1 text-xs rounded ${
+                                            savingOption || addOptionForm.label.trim().length === 0
+                                              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                              : 'bg-blue-600 text-white hover:bg-blue-700'
+                                          }`}
+                                        >
+                                          Done
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                             </div>
                           )}
                         </>
