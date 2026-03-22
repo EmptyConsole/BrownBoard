@@ -1,8 +1,3 @@
-# HUGE NOTES
-
-Use raster for whiteboard
-Use vectors for prototyping
-
 # Steps:
 
 # Project Management
@@ -22,7 +17,6 @@ Use vectors for prototyping
 
 # Whiteboard Expansion
 
-    Shapes
     Import image
 
 # Display Tab System

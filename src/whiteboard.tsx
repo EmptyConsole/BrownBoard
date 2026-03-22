@@ -13,13 +13,14 @@ import {
   Circle,
   Star,
   Heart,
+  ImageIcon,
 } from 'lucide-react'
 import { HexColorPicker } from 'react-colorful'
 import { supabase } from './lib/supabase'
 
 interface DrawAction {
   id?: string
-  type: 'stroke' | 'shape'
+  type: 'stroke' | 'shape' | 'image'
   userId?: string
   drawing: true | false
   points: { x: number; y: number }[]
@@ -29,6 +30,10 @@ interface DrawAction {
   shapeFill?: 'outline' | 'fill'
   // for resize support
   transform?: { scaleX: number; scaleY: number; originX: number; originY: number }
+  // for image type
+  imageDataUrl?: string
+  imageWidth?: number
+  imageHeight?: number
 }
 
 /**
@@ -49,7 +54,7 @@ interface DrawAction {
 export const Whiteboard: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
-  const [tool, setTool] = useState<'pen' | 'select' | 'shape'>('select')
+  const [tool, setTool] = useState<'pen' | 'select' | 'shape' | 'image'>('select')
   const [actions, setActions] = useState<DrawAction[]>([])
   const [currentAction, setCurrentAction] = useState<DrawAction | null>(null)
   const [mouseSize, setMouseSize] = useState(10)
@@ -111,6 +116,9 @@ export const Whiteboard: React.FC = () => {
   const otherCursorColors = useRef<Map<string, string>>(new Map())
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hoveredHandle, setHoveredHandle] = useState<string | null>(null)
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
   //SETTINGS
   const [showSettings, setShowSettings] = useState(false)
@@ -268,6 +276,15 @@ export const Whiteboard: React.FC = () => {
   const bboxesIntersect = (a: BBox, b: BBox) =>
     a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
   const getBBox = (action: DrawAction): BBox => {
+    if (action.type === 'image' && action.points.length >= 2) {
+      const [s, e] = action.points
+      return {
+        minX: Math.min(s.x, e.x),
+        minY: Math.min(s.y, e.y),
+        maxX: Math.max(s.x, e.x),
+        maxY: Math.max(s.y, e.y),
+      }
+    }
     if (action.type === 'shape' && action.points.length >= 2) {
       const [s, e] = action.points
       return {
@@ -279,11 +296,13 @@ export const Whiteboard: React.FC = () => {
     }
     const xs = action.points.map((p) => p.x)
     const ys = action.points.map((p) => p.y)
+    const r =
+      action.type === 'stroke' && action.points.length === 1 ? (action.lineWidth ?? 2) / 2 : 0
     return {
-      minX: Math.min(...xs),
-      minY: Math.min(...ys),
-      maxX: Math.max(...xs),
-      maxY: Math.max(...ys),
+      minX: Math.min(...xs) - r,
+      minY: Math.min(...ys) - r,
+      maxX: Math.max(...xs) + r,
+      maxY: Math.max(...ys) + r,
     }
   }
 
@@ -294,20 +313,25 @@ export const Whiteboard: React.FC = () => {
     y <= bbox.maxY + padding
 
   /** Returns true only when (x,y) is close to an actual drawn line or shape outline.
-   *  extraPadding is added on top of the action's own stroke half-width, so thick
-   *  strokes have a naturally larger hit area and you can always click a little outside. */
+   *  Uses canvas isPointInStroke / isPointInPath for pixel-perfect shape hit testing.
+   *  extraPadding is world-space pixels added on top of the stroke's own half-width. */
   const pointNearAction = (x: number, y: number, action: DrawAction, extraPadding = 8): boolean => {
-    // Hit radius = half the stroke width (the actual painted area) + extra padding
+    // Images: click anywhere inside the image bounding box
+    if (action.type === 'image') {
+      return pointInBBox(x, y, getBBox(action), extraPadding)
+    }
+
     const hitRadius = (action.lineWidth ?? 2) / 2 + extraPadding
 
-    // First cheap bounding-box reject
+    // Cheap bbox reject first
     if (!pointInBBox(x, y, getBBox(action), hitRadius)) return false
 
     if (action.type === 'stroke') {
+      // Segment-by-segment distance check — fast and accurate for polylines
       const pts = action.points
       if (pts.length === 1) {
-        const dx = x - pts[0].x
-        const dy = y - pts[0].y
+        const dx = x - pts[0].x,
+          dy = y - pts[0].y
         return Math.sqrt(dx * dx + dy * dy) <= hitRadius
       }
       for (let i = 0; i < pts.length - 1; i++) {
@@ -320,10 +344,8 @@ export const Whiteboard: React.FC = () => {
         const len2 = abx * abx + aby * aby
         let t = len2 > 0 ? ((x - ax) * abx + (y - ay) * aby) / len2 : 0
         t = Math.max(0, Math.min(1, t))
-        const closestX = ax + t * abx
-        const closestY = ay + t * aby
-        const dx = x - closestX,
-          dy = y - closestY
+        const dx = x - (ax + t * abx),
+          dy = y - (ay + t * aby)
         if (Math.sqrt(dx * dx + dy * dy) <= hitRadius) return true
       }
       return false
@@ -331,6 +353,16 @@ export const Whiteboard: React.FC = () => {
 
     if (action.type === 'shape') {
       if (!action.points || action.points.length < 2) return false
+
+      // Use an offscreen canvas so we can call isPointInStroke / isPointInPath
+      // with the exact same path the renderer uses — perfectly accurate for all shapes.
+      const offscreen = document.createElement('canvas')
+      offscreen.width = 1
+      offscreen.height = 1
+      const ctx = offscreen.getContext('2d')
+      if (!ctx) return false
+
+      // Build the path using the same helper logic as drawShapePath
       const [start, end] = action.points
       const width = end.x - start.x
       const height = end.y - start.y
@@ -339,39 +371,70 @@ export const Whiteboard: React.FC = () => {
       const absW = Math.abs(width)
       const absH = Math.abs(height)
 
-      // For filled shapes, hitting anywhere inside is valid
-      if (action.shapeFill === 'fill') return true
-
-      // For outline shapes, check proximity to the outline itself
+      ctx.beginPath()
       switch (action.shapeKind) {
         case 'rectangle': {
           const rx = Math.min(start.x, end.x)
           const ry = Math.min(start.y, end.y)
-          const nearTop =
-            Math.abs(y - ry) <= hitRadius && x >= rx - hitRadius && x <= rx + absW + hitRadius
-          const nearBottom =
-            Math.abs(y - (ry + absH)) <= hitRadius &&
-            x >= rx - hitRadius &&
-            x <= rx + absW + hitRadius
-          const nearLeft =
-            Math.abs(x - rx) <= hitRadius && y >= ry - hitRadius && y <= ry + absH + hitRadius
-          const nearRight =
-            Math.abs(x - (rx + absW)) <= hitRadius &&
-            y >= ry - hitRadius &&
-            y <= ry + absH + hitRadius
-          return nearTop || nearBottom || nearLeft || nearRight
+          ctx.rect(rx, ry, absW, absH)
+          break
         }
-        case 'circle': {
-          const rx = absW / 2 || 1
-          const ry2 = absH / 2 || 1
-          const nx = (x - centerX) / rx
-          const ny = (y - centerY) / ry2
-          const d = Math.sqrt(nx * nx + ny * ny)
-          const approxRadius = Math.min(rx, ry2)
-          return Math.abs(d - 1) * approxRadius <= hitRadius
+        case 'circle':
+          ctx.ellipse(
+            centerX,
+            centerY,
+            Math.max(absW / 2, 1),
+            Math.max(absH / 2, 1),
+            0,
+            0,
+            Math.PI * 2,
+          )
+          break
+        case 'star': {
+          const outerR = Math.max(absW, absH) / 2 || 1
+          const innerR = outerR * 0.5
+          for (let i = 0; i < 10; i++) {
+            const angle = (Math.PI / 5) * i - Math.PI / 2
+            const r = i % 2 === 0 ? outerR : innerR
+            const px = centerX + Math.cos(angle) * r
+            const py = centerY + Math.sin(angle) * r
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          break
         }
-        default:
-          return pointInBBox(x, y, getBBox(action), hitRadius / 2)
+        case 'heart': {
+          const sx = absW / 2 || 1
+          const sy = absH / 2 || 1
+          ctx.moveTo(centerX, centerY + sy * 0.9)
+          ctx.bezierCurveTo(
+            centerX + sx,
+            centerY + sy * 0.7,
+            centerX + sx * 0.9,
+            centerY - sy * 0.2,
+            centerX,
+            centerY + sy * 0.25,
+          )
+          ctx.bezierCurveTo(
+            centerX - sx * 0.9,
+            centerY - sy * 0.2,
+            centerX - sx,
+            centerY + sy * 0.7,
+            centerX,
+            centerY + sy * 0.9,
+          )
+          ctx.closePath()
+          break
+        }
+      }
+
+      if (action.shapeFill === 'fill') {
+        // Filled: hit anywhere inside the shape
+        return ctx.isPointInPath(x, y)
+      } else {
+        // Outline: hit near the stroke edge; set lineWidth to include our padding
+        ctx.lineWidth = (action.lineWidth ?? 2) + extraPadding * 2
+        return ctx.isPointInStroke(x, y)
       }
     }
     return false
@@ -384,6 +447,28 @@ export const Whiteboard: React.FC = () => {
     { id: 'se', x: bbox.maxX, y: bbox.maxY },
     { id: 'sw', x: bbox.minX, y: bbox.maxY },
   ]
+
+  // Load and cache an image element for a given data URL.
+  // Uses RAF to defer the redraw so it never fires re-entrantly inside drawAction.
+  const getOrLoadImage = (dataUrl: string): HTMLImageElement | null => {
+    if (!dataUrl) return null
+    if (imageCache.current.has(dataUrl)) return imageCache.current.get(dataUrl)!
+    // Return null immediately; set a loading sentinel so we don't spawn duplicate loads
+    imageCache.current.set(dataUrl, null as any)
+    const img = new Image()
+    img.onload = () => {
+      imageCache.current.set(dataUrl, img)
+      requestAnimationFrame(() => redrawRef.current())
+    }
+    img.onerror = () => {
+      imageCache.current.delete(dataUrl)
+    }
+    img.src = dataUrl
+    return null
+  }
+
+  // Keep a stable ref to redraw so image onload can call it
+  const redrawRef = useRef<() => void>(() => {})
 
   // helper that performs full redraw; can be called from resize handler
   const redraw = () => {
@@ -513,15 +598,42 @@ export const Whiteboard: React.FC = () => {
 
       if (action.type === 'stroke') {
         ctx.beginPath()
-        ctx.moveTo(action.points[0].x, action.points[0].y)
-        for (let i = 1; i < action.points.length; i++) {
-          ctx.lineTo(action.points[i].x, action.points[i].y)
+        if (action.points.length === 1) {
+          // Single point — draw a filled circle (dot)
+          ctx.arc(
+            action.points[0].x,
+            action.points[0].y,
+            (action.lineWidth || mouseSize) / 2,
+            0,
+            Math.PI * 2,
+          )
+          ctx.fill()
+        } else {
+          ctx.moveTo(action.points[0].x, action.points[0].y)
+          for (let i = 1; i < action.points.length; i++) {
+            ctx.lineTo(action.points[i].x, action.points[i].y)
+          }
+          ctx.stroke()
         }
-        ctx.stroke()
       } else if (action.type === 'shape') {
         drawShapePath(ctx, action)
         if (action.shapeFill === 'fill') ctx.fill()
         else ctx.stroke()
+      } else if (action.type === 'image' && action.imageDataUrl && action.points.length >= 2) {
+        const [tl, br] = action.points
+        const w = br.x - tl.x
+        const h = br.y - tl.y
+        const img = getOrLoadImage(action.imageDataUrl)
+        if (img) {
+          ctx.drawImage(img, tl.x, tl.y, w, h)
+        } else {
+          // Placeholder while loading
+          ctx.fillStyle = 'rgba(200,200,200,0.5)'
+          ctx.fillRect(tl.x, tl.y, w, h)
+          ctx.strokeStyle = '#aaa'
+          ctx.lineWidth = 1
+          ctx.strokeRect(tl.x, tl.y, w, h)
+        }
       }
       ctx.restore()
     }
@@ -539,25 +651,44 @@ export const Whiteboard: React.FC = () => {
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
         const baseWidth = hovered.lineWidth || mouseSize
+        // halo lineWidth is in world units (canvas is already scaled) so it
+        // grows/shrinks with zoom just like the stroke itself does
+        const haloW = baseWidth + 8
         if (hovered.type === 'stroke') {
-          ctx.lineWidth = (baseWidth + 10) / scale
+          ctx.lineWidth = haloW
           ctx.beginPath()
-          ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
-          for (let i = 1; i < hovered.points.length; i++)
-            ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
+          if (hovered.points.length === 1) {
+            ctx.arc(hovered.points[0].x, hovered.points[0].y, haloW / 2, 0, Math.PI * 2)
+          } else {
+            ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
+            for (let i = 1; i < hovered.points.length; i++)
+              ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
+          }
           ctx.stroke()
-          // Re-draw original stroke on top so the halo only shows around the edges
+          // Re-draw the original stroke on top so halo only shows around edges
           ctx.strokeStyle = hovered.drawColor || drawColor
-          ctx.lineWidth = baseWidth / scale
+          ctx.fillStyle = hovered.drawColor || drawColor
+          ctx.lineWidth = baseWidth
           ctx.beginPath()
-          ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
-          for (let i = 1; i < hovered.points.length; i++)
-            ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
-          ctx.stroke()
+          if (hovered.points.length === 1) {
+            ctx.arc(hovered.points[0].x, hovered.points[0].y, baseWidth / 2, 0, Math.PI * 2)
+            ctx.fill()
+          } else {
+            ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
+            for (let i = 1; i < hovered.points.length; i++)
+              ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
+            ctx.stroke()
+          }
         } else if (hovered.type === 'shape') {
-          ctx.lineWidth = (baseWidth + 10) / scale
+          ctx.lineWidth = haloW
           drawShapePath(ctx, hovered)
           ctx.stroke()
+        } else if (hovered.type === 'image' && hovered.points.length >= 2) {
+          const [tl, br] = hovered.points
+          ctx.lineWidth = 3
+          ctx.setLineDash([5, 3])
+          ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
+          ctx.setLineDash([])
         }
         ctx.restore()
       }
@@ -575,17 +706,31 @@ export const Whiteboard: React.FC = () => {
       for (const sel of wouldSelect) {
         ctx.save()
         ctx.strokeStyle = 'rgba(59,130,246,0.5)'
-        ctx.lineWidth = (sel.lineWidth || mouseSize) + 6 / scale
+        ctx.lineWidth = (sel.lineWidth || mouseSize) + 6
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
         if (sel.type === 'stroke') {
           ctx.beginPath()
-          ctx.moveTo(sel.points[0].x, sel.points[0].y)
-          for (let i = 1; i < sel.points.length; i++) ctx.lineTo(sel.points[i].x, sel.points[i].y)
+          if (sel.points.length === 1) {
+            ctx.arc(
+              sel.points[0].x,
+              sel.points[0].y,
+              ((sel.lineWidth || mouseSize) + 6) / 2,
+              0,
+              Math.PI * 2,
+            )
+          } else {
+            ctx.moveTo(sel.points[0].x, sel.points[0].y)
+            for (let i = 1; i < sel.points.length; i++) ctx.lineTo(sel.points[i].x, sel.points[i].y)
+          }
           ctx.stroke()
         } else if (sel.type === 'shape') {
           drawShapePath(ctx, sel)
           ctx.stroke()
+        } else if (sel.type === 'image' && sel.points.length >= 2) {
+          ctx.lineWidth = 3
+          const [tl, br] = sel.points
+          ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
         }
         ctx.restore()
       }
@@ -612,15 +757,24 @@ export const Whiteboard: React.FC = () => {
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
         if (sel.type === 'stroke') {
-          ctx.lineWidth = Math.max(2, (sel.lineWidth || mouseSize) - 4) / scale
+          const sw = sel.lineWidth || mouseSize
+          ctx.lineWidth = sw + 6
           ctx.beginPath()
-          ctx.moveTo(sel.points[0].x, sel.points[0].y)
-          for (let i = 1; i < sel.points.length; i++) ctx.lineTo(sel.points[i].x, sel.points[i].y)
+          if (sel.points.length === 1) {
+            ctx.arc(sel.points[0].x, sel.points[0].y, (sw + 6) / 2, 0, Math.PI * 2)
+          } else {
+            ctx.moveTo(sel.points[0].x, sel.points[0].y)
+            for (let i = 1; i < sel.points.length; i++) ctx.lineTo(sel.points[i].x, sel.points[i].y)
+          }
           ctx.stroke()
         } else if (sel.type === 'shape') {
-          ctx.lineWidth = (sel.lineWidth || mouseSize) + 6 / scale
+          ctx.lineWidth = (sel.lineWidth || mouseSize) + 6
           drawShapePath(ctx, sel)
           ctx.stroke()
+        } else if (sel.type === 'image' && sel.points.length >= 2) {
+          ctx.lineWidth = 2
+          const [tl, br] = sel.points
+          ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
         }
         ctx.setLineDash([])
         ctx.restore()
@@ -663,6 +817,7 @@ export const Whiteboard: React.FC = () => {
 
   // effect drives redraw whenever relevant state changes
   useEffect(() => {
+    redrawRef.current = redraw
     redraw()
   }, [
     actions,
@@ -816,10 +971,29 @@ export const Whiteboard: React.FC = () => {
         const origH = multiBbox.maxY - multiBbox.minY
         if (origW === 0 || origH === 0) return
         const handle = isResizingSelection
-        const newMinX = handle.includes('w') ? multiBbox.minX + dx : multiBbox.minX
-        const newMaxX = handle.includes('e') ? multiBbox.maxX + dx : multiBbox.maxX
-        const newMinY = handle.includes('n') ? multiBbox.minY + dy : multiBbox.minY
-        const newMaxY = handle.includes('s') ? multiBbox.maxY + dy : multiBbox.maxY
+
+        // For a single image, lock aspect ratio
+        const isSingleImage = snapshots.length === 1 && snapshots[0].type === 'image'
+        let newMinX = handle.includes('w') ? multiBbox.minX + dx : multiBbox.minX
+        let newMaxX = handle.includes('e') ? multiBbox.maxX + dx : multiBbox.maxX
+        let newMinY = handle.includes('n') ? multiBbox.minY + dy : multiBbox.minY
+        let newMaxY = handle.includes('s') ? multiBbox.maxY + dy : multiBbox.maxY
+
+        if (isSingleImage) {
+          const aspectRatio = origW / origH
+          // Drive from the axis the handle actually controls
+          const drivingW = handle.includes('e') || handle.includes('w')
+          if (drivingW) {
+            const lockedH = (newMaxX - newMinX) / aspectRatio
+            if (handle.includes('n')) newMinY = newMaxY - lockedH
+            else newMaxY = newMinY + lockedH
+          } else {
+            const lockedW = (newMaxY - newMinY) * aspectRatio
+            if (handle.includes('w')) newMinX = newMaxX - lockedW
+            else newMaxX = newMinX + lockedW
+          }
+        }
+
         const newW = newMaxX - newMinX
         const newH = newMaxY - newMinY
         if (Math.abs(newW) < 1 || Math.abs(newH) < 1) return
@@ -923,6 +1097,63 @@ export const Whiteboard: React.FC = () => {
     }
   }
 
+  // Place an image on the canvas from a File or data URL
+  const addImageToCanvas = (
+    dataUrl: string,
+    naturalW: number,
+    naturalH: number,
+    dropX?: number,
+    dropY?: number,
+  ) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    // Default placement: centered, max 400px wide
+    const maxW = 400
+    const ratio = naturalH / naturalW
+    const w = Math.min(maxW, naturalW)
+    const h = w * ratio
+    const cx =
+      dropX !== undefined ? dropX : (canvas.width / 2 - panRef.current.x) / scaleRef.current
+    const cy =
+      dropY !== undefined ? dropY : (canvas.height / 2 - panRef.current.y) / scaleRef.current
+    const action: DrawAction = {
+      id: crypto.randomUUID(),
+      userId: userIdRef.current,
+      type: 'image',
+      drawing: true,
+      points: [
+        { x: cx - w / 2, y: cy - h / 2 },
+        { x: cx + w / 2, y: cy + h / 2 },
+      ],
+      imageDataUrl: dataUrl,
+      imageWidth: naturalW,
+      imageHeight: naturalH,
+    }
+    setActionsAndRef((prev) => [...prev, action])
+    myUndoStack.current.push(action)
+    myRedoStack.current = []
+    setCanUndo(true)
+    setCanRedo(false)
+    setSelectedIdsAndRef(new Set([action.id!]))
+    setTool('select')
+    supabase.from('strokes').insert({ room_id: roomId, data: action }).then()
+    // No set_state broadcast needed — other clients receive the image via the strokes INSERT listener
+  }
+
+  const handleImageFile = (file: File, dropWorldX?: number, dropWorldY?: number) => {
+    if (!file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string
+      const img = new Image()
+      img.onload = () => {
+        addImageToCanvas(dataUrl, img.naturalWidth, img.naturalHeight, dropWorldX, dropWorldY)
+      }
+      img.src = dataUrl
+    }
+    reader.readAsDataURL(file)
+  }
+
   const stopDrawing = async () => {
     if (isDraggingSelection || isResizingSelection) {
       setIsDraggingSelection(false)
@@ -931,6 +1162,9 @@ export const Whiteboard: React.FC = () => {
       resizeStartRef.current = null
       const selectedActions = actionsRef.current.filter((a) => a.id && selectedIds.has(a.id))
       for (const updated of selectedActions) {
+        // Images already have their data in the DB from the initial insert.
+        // On move/resize, only points change — send the full action (imageDataUrl
+        // is still on the in-memory object from the original upload).
         await supabase
           .from('strokes')
           .update({ data: updated })
@@ -1261,7 +1495,21 @@ export const Whiteboard: React.FC = () => {
             setCanUndo(false)
             setCanRedo(false)
           } else if (type === 'set_state') {
-            setActionsAndRef(data.actions)
+            if (data?.actions) {
+              // Merge incoming actions: preserve local imageDataUrl for images
+              // since set_state strips them to keep payload size small
+              setActionsAndRef((prev) => {
+                const localById = new Map(prev.map((a) => [a.id, a]))
+                return data.actions.map((incoming: any) => {
+                  if (incoming.type === 'image' && !incoming.imageDataUrl) {
+                    const local = localById.get(incoming.id)
+                    if (local?.imageDataUrl)
+                      return { ...incoming, imageDataUrl: local.imageDataUrl }
+                  }
+                  return incoming
+                })
+              })
+            }
           }
         },
       )
@@ -1312,7 +1560,19 @@ export const Whiteboard: React.FC = () => {
   }, [otherCursors, panX, panY, scale])
   //   useEffect(() => {}, []) // make sure this is empty array
   const broadcastEvent = async (type: string, data?: any) => {
-    await supabase.from('events').insert({ room_id: roomId, type, data })
+    // Strip imageDataUrl from set_state payloads — images can be several MB
+    // and will exceed the events table row limit. Images sync via the strokes
+    // INSERT listener instead, so receivers already have them.
+    let payload = data
+    if (type === 'set_state' && data?.actions) {
+      payload = {
+        ...data,
+        actions: data.actions.map((a: any) =>
+          a.type === 'image' ? { ...a, imageDataUrl: undefined } : a,
+        ),
+      }
+    }
+    await supabase.from('events').insert({ room_id: roomId, type, data: payload })
   }
 
   const hudScale = hudSize === 'small' ? 0.85 : hudSize === 'large' ? 1.15 : 1
@@ -1367,7 +1627,48 @@ export const Whiteboard: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ cursor: 'none' }}>
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ cursor: 'none' }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        setIsDragOver(true)
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setIsDragOver(false)
+        const file = e.dataTransfer.files[0]
+        if (!file) return
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const rect = canvas.getBoundingClientRect()
+        const worldX = (e.clientX - rect.left - panRef.current.x) / scaleRef.current
+        const worldY = (e.clientY - rect.top - panRef.current.y) / scaleRef.current
+        handleImageFile(file, worldX, worldY)
+      }}
+    >
+      {/* Hidden file input for image upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) handleImageFile(file)
+          e.target.value = ''
+        }}
+      />
+      {/* Drag-over overlay */}
+      {isDragOver && (
+        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-blue-500/10 border-4 border-dashed border-blue-400">
+          <div className="bg-white rounded-2xl shadow-xl px-8 py-6 flex flex-col items-center gap-2">
+            <ImageIcon size={32} className="text-blue-400" />
+            <span className="text-sm font-medium text-blue-600">Drop image here</span>
+          </div>
+        </div>
+      )}
       {/* Full-screen canvas */}
       <canvas
         ref={canvasRef}
@@ -1436,16 +1737,52 @@ export const Whiteboard: React.FC = () => {
             const rect = canvasRef.current?.getBoundingClientRect()
             const screenX = cursor.x * scaleRef.current + panRef.current.x + (rect?.left ?? 0)
             const screenY = cursor.y * scaleRef.current + panRef.current.y + (rect?.top ?? 0)
-            const color = otherCursorColors.current.get(cursor.userId) ?? '#000000'
+            // Pick a vivid, stable color from the userId
+            const hue =
+              Math.abs(
+                cursor.userId
+                  .split('')
+                  .reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0),
+              ) % 360
+            const cursorFill = `hsl(${hue}, 80%, 50%)`
+            const shortId = cursor.userId.slice(0, 4)
             return (
-              <circle
-                key={cursor.userId}
-                cx={screenX}
-                cy={screenY}
-                r="6"
-                fill={color}
-                opacity={0.7}
-              />
+              <g key={cursor.userId} style={{ pointerEvents: 'none' }}>
+                {/* Drop shadow for contrast on any background */}
+                <path
+                  d="M 0 0 L 0 16 L 4 12 L 8 20 L 10 19 L 6 11 L 11 11 Z"
+                  transform={`translate(${screenX + 1}, ${screenY + 1})`}
+                  fill="rgba(0,0,0,0.35)"
+                />
+                {/* Cursor arrow shape */}
+                <path
+                  d="M 0 0 L 0 16 L 4 12 L 8 20 L 10 19 L 6 11 L 11 11 Z"
+                  transform={`translate(${screenX}, ${screenY})`}
+                  fill={cursorFill}
+                  stroke="white"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+                {/* Name label */}
+                <rect
+                  x={screenX + 13}
+                  y={screenY + 2}
+                  width={shortId.length * 7 + 8}
+                  height={16}
+                  rx={4}
+                  fill={cursorFill}
+                />
+                <text
+                  x={screenX + 17}
+                  y={screenY + 13}
+                  fontSize="10"
+                  fontFamily="monospace"
+                  fontWeight="600"
+                  fill="white"
+                >
+                  {shortId}
+                </text>
+              </g>
             )
           })}
       </svg>
@@ -1530,10 +1867,10 @@ export const Whiteboard: React.FC = () => {
             <div
               className="rounded-full border"
               style={{
-                width: Math.max(6, mouseSize / 2),
-                height: Math.max(6, mouseSize / 2),
+                width: Math.max(6, mouseSize * scale),
+                height: Math.max(6, mouseSize * scale),
                 borderColor: cursorColor,
-                borderWidth: 1,
+                borderWidth: 1.5,
               }}
             />
           )}
@@ -1627,17 +1964,35 @@ export const Whiteboard: React.FC = () => {
               <MousePointer2 size={16} strokeWidth={2} />
             </button>
             <button
-              onClick={() => setTool('pen')}
+              onClick={() => {
+                setTool('pen')
+                setSelectedIdsAndRef(new Set())
+              }}
               title="Pen"
               className={`p-2 rounded-xl transition-all duration-150 ${tool === 'pen' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
             >
               <Pen size={16} strokeWidth={2} />
             </button>
 
+            {/* Image upload button */}
+            <button
+              onClick={() => {
+                setSelectedIdsAndRef(new Set())
+                fileInputRef.current?.click()
+              }}
+              title="Upload Image"
+              className={`p-2 rounded-xl transition-all duration-150 ${tool === 'image' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
+            >
+              <ImageIcon size={16} strokeWidth={2} />
+            </button>
+
             {/* Shape button with hover panel */}
             <div className="relative" onMouseEnter={openShapePanel} onMouseLeave={closeShapePanel}>
               <button
-                onClick={() => setTool('shape')}
+                onClick={() => {
+                  setTool('shape')
+                  setSelectedIdsAndRef(new Set())
+                }}
                 title="Shapes"
                 className={`p-2 rounded-xl transition-all duration-150 ${tool === 'shape' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`}
               >
@@ -1659,6 +2014,7 @@ export const Whiteboard: React.FC = () => {
                           onClick={() => {
                             setShapeKind(shape)
                             setTool('shape')
+                            setSelectedIdsAndRef(new Set())
                           }}
                           className={`flex flex-col items-center gap-1 p-2 rounded-xl text-xs capitalize transition-all ${shapeKind === shape ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
                         >
