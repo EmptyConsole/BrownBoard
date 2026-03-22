@@ -49,7 +49,7 @@ interface DrawAction {
 export const Whiteboard: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
-  const [tool, setTool] = useState<'pen' | 'select' | 'shape'>('pen')
+  const [tool, setTool] = useState<'pen' | 'select' | 'shape'>('select')
   const [actions, setActions] = useState<DrawAction[]>([])
   const [currentAction, setCurrentAction] = useState<DrawAction | null>(null)
   const [mouseSize, setMouseSize] = useState(10)
@@ -796,7 +796,9 @@ export const Whiteboard: React.FC = () => {
         }
         setHoveredHandle(foundHandle)
         // Hover detection — find topmost stroke under cursor
-        const hit = foundHandle ? null : [...actions].reverse().find((a) => a.id && pointInBBox(x, y, getBBox(a), 8))
+        const hit = foundHandle
+          ? null
+          : [...actions].reverse().find((a) => a.id && pointInBBox(x, y, getBBox(a), 8))
         setHoveredId(hit?.id ?? null)
       }
       return
@@ -1281,17 +1283,20 @@ export const Whiteboard: React.FC = () => {
     <div className="flex h-screen overflow-hidden" style={{ cursor: 'none' }}>
       {/* Full-screen canvas */}
       <canvas
-  ref={canvasRef}
-  style={{         // ← replace the whole style={{ ... }} block here
-    position: 'absolute',
-    inset: 0,
-    width: '100%',
-    height: '100%',
-    touchAction: 'none',
-    cursor: hoveredHandle
-      ? (hoveredHandle === 'nw' || hoveredHandle === 'se' ? 'nw-resize' : 'ne-resize')
-      : 'none',
-  }}
+        ref={canvasRef}
+        style={{
+          // ← replace the whole style={{ ... }} block here
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          touchAction: 'none',
+          cursor: hoveredHandle
+            ? hoveredHandle === 'nw' || hoveredHandle === 'se'
+              ? 'nw-resize'
+              : 'ne-resize'
+            : 'none',
+        }}
         onMouseDown={(e) => {
           if (e.button === 2) handleCanvasPan(e, true)
           else if (e.button === 0) startDrawing(e)
@@ -1365,23 +1370,46 @@ export const Whiteboard: React.FC = () => {
                 height="20"
                 viewBox="0 0 20 20"
                 style={{
-                  transform: hoveredHandle === 'nw' || hoveredHandle === 'se'
-                    ? 'rotate(0deg)'
-                    : 'rotate(90deg)',
+                  transform:
+                    hoveredHandle === 'nw' || hoveredHandle === 'se'
+                      ? 'rotate(0deg)'
+                      : 'rotate(90deg)',
                   filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
                 }}
               >
                 {/* Double-headed diagonal arrow */}
-                <line x1="3" y1="3" x2="17" y2="17" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round"/>
-                <polyline points="3,9 3,3 9,3" fill="none" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <polyline points="17,11 17,17 11,17" fill="none" stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <line
+                  x1="3"
+                  y1="3"
+                  x2="17"
+                  y2="17"
+                  stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <polyline
+                  points="3,9 3,3 9,3"
+                  fill="none"
+                  stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <polyline
+                  points="17,11 17,17 11,17"
+                  fill="none"
+                  stroke={cursorColor === '#ffffff' ? 'white' : '#1e3a5f'}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             ) : (
-            <MousePointer2
-              size={22}
-              color={cursorColor}
-              style={{ fill: cursorColor === '#ffffff' ? 'black' : 'white' }}
-            />
+              <MousePointer2
+                size={22}
+                color={cursorColor}
+                style={{ fill: cursorColor === '#ffffff' ? 'black' : 'white' }}
+              />
             )
           ) : cursorStyle === 'dot' ? (
             <div
