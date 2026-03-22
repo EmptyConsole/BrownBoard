@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { MoreVertical, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { supabase } from './lib/supabase'
 
 type TaskStatus = 'not_started' | 'in_progress' | 'completed'
@@ -249,12 +249,17 @@ export const KanbanBoard: React.FC = () => {
     }
   }
 
-  const handleDragStart = (taskId: string, categoryId: string) => {
+  const handleDragStart = (taskId: string, categoryId: string, e: React.DragEvent<HTMLDivElement>) => {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', taskId)
     setDraggedTask({ taskId, fromCategoryId: categoryId })
   }
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>, categoryId: string) => {
     e.preventDefault()
+    if (!draggedTask) return
+    if (draggedTask.fromCategoryId === categoryId) return
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     e.currentTarget.classList.add('bg-blue-50')
   }
 
@@ -262,18 +267,69 @@ export const KanbanBoard: React.FC = () => {
     e.currentTarget.classList.remove('bg-blue-50')
   }
 
+  const handleTaskDragOver = (e: React.DragEvent<HTMLDivElement>, categoryId: string, targetTaskId: string) => {
+    e.preventDefault()
+    if (!draggedTask) return
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    const isSameCategory = draggedTask.fromCategoryId === categoryId
+
+    setCategories((prev) => {
+      const sourceIndex = prev.findIndex((cat) => cat.id === draggedTask.fromCategoryId)
+      const targetIndex = prev.findIndex((cat) => cat.id === categoryId)
+      if (sourceIndex === -1 || targetIndex === -1) return prev
+
+      const sourceCat = prev[sourceIndex]
+      const targetCat = prev[targetIndex]
+
+      const sourceTasks = [...sourceCat.tasks]
+      const fromIdx = sourceTasks.findIndex((t) => t.id === draggedTask.taskId)
+      if (fromIdx === -1) return prev
+
+      const [movedTask] = sourceTasks.splice(fromIdx, 1)
+      const targetTasks = isSameCategory ? sourceTasks : [...targetCat.tasks]
+
+      const targetIdx = targetTasks.findIndex((t) => t.id === targetTaskId)
+      const insertIdx = targetIdx === -1 ? targetTasks.length : targetIdx
+
+      // Avoid no-op reorders
+      if (isSameCategory && insertIdx === fromIdx) return prev
+
+      targetTasks.splice(insertIdx, 0, { ...movedTask, categoryId })
+
+      const next = [...prev]
+      next[sourceIndex] = { ...sourceCat, tasks: isSameCategory ? targetTasks : sourceTasks }
+      next[targetIndex] = { ...targetCat, tasks: targetTasks }
+
+      return next
+    })
+  }
+
   const handleDrop = async (categoryId: string, e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.currentTarget.classList.remove('bg-blue-50')
     if (!draggedTask) return
 
-    let movedTask: Task | undefined
+    let sourceOrder: Task[] = []
+    let destinationOrder: Task[] = []
+
     setCategories((prev) => {
-      const withoutTask = prev.map((cat) => {
-        if (cat.id !== draggedTask.fromCategoryId) return cat
+      const destination = prev.find((cat) => cat.id === categoryId)
+      const destinationHasTask = destination?.tasks.some((t) => t.id === draggedTask.taskId)
+
+      if (destinationHasTask) {
+        const next = prev.map((cat) =>
+          cat.id === categoryId ? cat : { ...cat, tasks: cat.tasks.filter((t) => t.id !== draggedTask.taskId) },
+        )
+        sourceOrder = next.find((c) => c.id === draggedTask.fromCategoryId)?.tasks ?? []
+        destinationOrder = next.find((c) => c.id === categoryId)?.tasks ?? []
+        return next
+      }
+
+      let taskToMove: Task | undefined
+      const stripped = prev.map((cat) => {
         const remaining = cat.tasks.filter((t) => {
           if (t.id === draggedTask.taskId) {
-            movedTask = t
+            taskToMove = t
             return false
           }
           return true
@@ -281,19 +337,40 @@ export const KanbanBoard: React.FC = () => {
         return { ...cat, tasks: remaining }
       })
 
-      return withoutTask.map((cat) => {
-        if (cat.id === categoryId && movedTask) {
-          return { ...cat, tasks: [...cat.tasks, { ...movedTask, categoryId }] }
-        }
-        return cat
-      })
+      const next = stripped.map((cat) =>
+        cat.id === categoryId && taskToMove
+          ? { ...cat, tasks: [...cat.tasks, { ...taskToMove, categoryId }] }
+          : cat,
+      )
+
+      sourceOrder = next.find((c) => c.id === draggedTask.fromCategoryId)?.tasks ?? []
+      destinationOrder = next.find((c) => c.id === categoryId)?.tasks ?? []
+
+      return next
     })
 
-    const newPosition = categories.find((c) => c.id === categoryId)?.tasks.length ?? 0
-    const { error: updateError } = await supabase
-      .from('tasks')
-      .update({ category_id: categoryId, position: newPosition })
-      .eq('id', draggedTask.taskId)
+    const updates: Array<PromiseLike<{ error: any }>> = destinationOrder.map(
+      (task, index) =>
+        supabase
+          .from('tasks')
+          .update({ position: index, category_id: categoryId })
+          .eq('id', task.id) as unknown as PromiseLike<{ error: any }>,
+    )
+
+    if (categoryId !== draggedTask.fromCategoryId) {
+      updates.push(
+        ...sourceOrder.map(
+          (task, index) =>
+            supabase
+              .from('tasks')
+              .update({ position: index, category_id: task.categoryId })
+              .eq('id', task.id) as unknown as PromiseLike<{ error: any }>,
+        ),
+      )
+    }
+
+    const results = await Promise.all(updates)
+    const updateError = (results as Array<{ error?: any }>).find((r) => r.error)?.error
 
     if (updateError) {
       setError(updateError.message)
@@ -369,7 +446,7 @@ export const KanbanBoard: React.FC = () => {
 
               <div
                 className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 transition-colors"
-                onDragOver={handleDragOver}
+                onDragOver={(e) => handleColumnDragOver(e, category.id)}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(category.id, e)}
               >
@@ -381,23 +458,14 @@ export const KanbanBoard: React.FC = () => {
                     <div
                       key={task.id}
                       draggable
-                      onDragStart={() => handleDragStart(task.id, category.id)}
+                      onDragStart={(e) => handleDragStart(task.id, category.id, e)}
+                      onDragOver={(e) => handleTaskDragOver(e, category.id, task.id)}
                       className="relative bg-white border border-gray-200 rounded-lg p-3 cursor-move hover:shadow-md transition-shadow hover:border-gray-300 group"
                     >
                       {!isEditing ? (
                         <>
                           <div className="flex items-start justify-between gap-2">
-                            <h3
-                              className="text-sm font-medium text-gray-800 cursor-pointer hover:text-blue-600"
-                              onClick={() =>
-                                setEditingTask({
-                                  taskId: task.id,
-                                  categoryId: category.id,
-                                  title: task.title,
-                                  description: task.description || '',
-                                })
-                              }
-                            >
+                            <h3 className="text-sm font-medium text-gray-800">
                               {task.title}
                             </h3>
                             {statusMeta && (
@@ -421,7 +489,7 @@ export const KanbanBoard: React.FC = () => {
                           {task.description && (
                             <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{task.description}</p>
                           )}
-                          <div className="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity justify-start">
                             <button
                               onClick={() =>
                                 setEditingTask({
@@ -434,7 +502,7 @@ export const KanbanBoard: React.FC = () => {
                               className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
                               title="Edit task"
                             >
-                              <MoreVertical size={14} />
+                              <Pencil size={14} />
                             </button>
                             <button
                               onClick={() => deleteTask(task.id, category.id)}
