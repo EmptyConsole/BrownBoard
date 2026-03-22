@@ -92,6 +92,7 @@ export const Whiteboard: React.FC = () => {
   const actionsRef = useRef<DrawAction[]>([])
   const myClearRedoStack = useRef<{ actions: DrawAction[]; undoStack: DrawAction[] }[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const selectedIdsRef = useRef<Set<string>>(new Set())
   const [isDraggingSelection, setIsDraggingSelection] = useState(false)
   const [isResizingSelection, setIsResizingSelection] = useState<string | null>(null)
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(
@@ -292,6 +293,90 @@ export const Whiteboard: React.FC = () => {
     y >= bbox.minY - padding &&
     y <= bbox.maxY + padding
 
+  /** Returns true only when (x,y) is close to an actual drawn line or shape outline.
+   *  extraPadding is added on top of the action's own stroke half-width, so thick
+   *  strokes have a naturally larger hit area and you can always click a little outside. */
+  const pointNearAction = (x: number, y: number, action: DrawAction, extraPadding = 8): boolean => {
+    // Hit radius = half the stroke width (the actual painted area) + extra padding
+    const hitRadius = (action.lineWidth ?? 2) / 2 + extraPadding
+
+    // First cheap bounding-box reject
+    if (!pointInBBox(x, y, getBBox(action), hitRadius)) return false
+
+    if (action.type === 'stroke') {
+      const pts = action.points
+      if (pts.length === 1) {
+        const dx = x - pts[0].x
+        const dy = y - pts[0].y
+        return Math.sqrt(dx * dx + dy * dy) <= hitRadius
+      }
+      for (let i = 0; i < pts.length - 1; i++) {
+        const ax = pts[i].x,
+          ay = pts[i].y
+        const bx = pts[i + 1].x,
+          by = pts[i + 1].y
+        const abx = bx - ax,
+          aby = by - ay
+        const len2 = abx * abx + aby * aby
+        let t = len2 > 0 ? ((x - ax) * abx + (y - ay) * aby) / len2 : 0
+        t = Math.max(0, Math.min(1, t))
+        const closestX = ax + t * abx
+        const closestY = ay + t * aby
+        const dx = x - closestX,
+          dy = y - closestY
+        if (Math.sqrt(dx * dx + dy * dy) <= hitRadius) return true
+      }
+      return false
+    }
+
+    if (action.type === 'shape') {
+      if (!action.points || action.points.length < 2) return false
+      const [start, end] = action.points
+      const width = end.x - start.x
+      const height = end.y - start.y
+      const centerX = start.x + width / 2
+      const centerY = start.y + height / 2
+      const absW = Math.abs(width)
+      const absH = Math.abs(height)
+
+      // For filled shapes, hitting anywhere inside is valid
+      if (action.shapeFill === 'fill') return true
+
+      // For outline shapes, check proximity to the outline itself
+      switch (action.shapeKind) {
+        case 'rectangle': {
+          const rx = Math.min(start.x, end.x)
+          const ry = Math.min(start.y, end.y)
+          const nearTop =
+            Math.abs(y - ry) <= hitRadius && x >= rx - hitRadius && x <= rx + absW + hitRadius
+          const nearBottom =
+            Math.abs(y - (ry + absH)) <= hitRadius &&
+            x >= rx - hitRadius &&
+            x <= rx + absW + hitRadius
+          const nearLeft =
+            Math.abs(x - rx) <= hitRadius && y >= ry - hitRadius && y <= ry + absH + hitRadius
+          const nearRight =
+            Math.abs(x - (rx + absW)) <= hitRadius &&
+            y >= ry - hitRadius &&
+            y <= ry + absH + hitRadius
+          return nearTop || nearBottom || nearLeft || nearRight
+        }
+        case 'circle': {
+          const rx = absW / 2 || 1
+          const ry2 = absH / 2 || 1
+          const nx = (x - centerX) / rx
+          const ny = (y - centerY) / ry2
+          const d = Math.sqrt(nx * nx + ny * ny)
+          const approxRadius = Math.min(rx, ry2)
+          return Math.abs(d - 1) * approxRadius <= hitRadius
+        }
+        default:
+          return pointInBBox(x, y, getBBox(action), hitRadius / 2)
+      }
+    }
+    return false
+  }
+
   const HANDLE_SIZE = 8
   const getResizeHandles = (bbox: BBox) => [
     { id: 'nw', x: bbox.minX, y: bbox.minY },
@@ -448,40 +533,29 @@ export const Whiteboard: React.FC = () => {
     if (hoveredId && !marqueeStartRef.current) {
       const hovered = actions.find((a) => a.id === hoveredId)
       if (hovered) {
-        const hbbox = getBBox(hovered)
-        const pad = 10
+        // Draw a wide blue halo so it peeks out around the edges of the stroke
         ctx.save()
-        ctx.fillStyle = 'rgba(59,130,246,0.04)'
-        ctx.strokeStyle = 'rgba(59,130,246,0.4)'
-        ctx.lineWidth = 1 / scale
-        ctx.setLineDash([4 / scale, 3 / scale])
-        ctx.fillRect(
-          hbbox.minX - pad,
-          hbbox.minY - pad,
-          hbbox.maxX - hbbox.minX + pad * 2,
-          hbbox.maxY - hbbox.minY + pad * 2,
-        )
-        ctx.strokeRect(
-          hbbox.minX - pad,
-          hbbox.minY - pad,
-          hbbox.maxX - hbbox.minX + pad * 2,
-          hbbox.maxY - hbbox.minY + pad * 2,
-        )
-        ctx.setLineDash([])
-        ctx.restore()
-        ctx.save()
-        ctx.strokeStyle = 'rgba(59,130,246,0.5)'
+        ctx.strokeStyle = 'rgba(59,130,246,0.85)'
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
+        const baseWidth = hovered.lineWidth || mouseSize
         if (hovered.type === 'stroke') {
-          ctx.lineWidth = Math.max(2, (hovered.lineWidth || mouseSize) - 2) / scale
+          ctx.lineWidth = (baseWidth + 10) / scale
+          ctx.beginPath()
+          ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
+          for (let i = 1; i < hovered.points.length; i++)
+            ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
+          ctx.stroke()
+          // Re-draw original stroke on top so the halo only shows around the edges
+          ctx.strokeStyle = hovered.drawColor || drawColor
+          ctx.lineWidth = baseWidth / scale
           ctx.beginPath()
           ctx.moveTo(hovered.points[0].x, hovered.points[0].y)
           for (let i = 1; i < hovered.points.length; i++)
             ctx.lineTo(hovered.points[i].x, hovered.points[i].y)
           ctx.stroke()
         } else if (hovered.type === 'shape') {
-          ctx.lineWidth = (hovered.lineWidth || mouseSize) + 4 / scale
+          ctx.lineWidth = (baseWidth + 10) / scale
           drawShapePath(ctx, hovered)
           ctx.stroke()
         }
@@ -634,8 +708,10 @@ export const Whiteboard: React.FC = () => {
 
     if (tool === 'select') {
       // Check resize handles on combined bbox
-      if (selectedIds.size > 0) {
-        const selectedActions = actions.filter((a) => a.id && selectedIds.has(a.id))
+      if (selectedIdsRef.current.size > 0) {
+        const selectedActions = actionsRef.current.filter(
+          (a) => a.id && selectedIdsRef.current.has(a.id),
+        )
         const multiBbox = getMultiBBox(selectedActions)
         if (multiBbox) {
           const pad = 10
@@ -679,7 +755,7 @@ export const Whiteboard: React.FC = () => {
       // Start marquee
       marqueeStartRef.current = { x, y }
       setMarquee({ x, y, w: 0, h: 0 })
-      setSelectedIds(new Set())
+      setSelectedIdsAndRef(new Set())
       setHoveredHandle(null)
       return
     }
@@ -774,8 +850,10 @@ export const Whiteboard: React.FC = () => {
       } else {
         // Check resize handle hover first (fixed 12px screen-space tolerance)
         let foundHandle: string | null = null
-        if (selectedIds.size > 0) {
-          const selectedActions = actions.filter((a) => a.id && selectedIds.has(a.id))
+        if (selectedIdsRef.current.size > 0) {
+          const selectedActions = actionsRef.current.filter(
+            (a) => a.id && selectedIdsRef.current.has(a.id),
+          )
           const multiBbox = getMultiBBox(selectedActions)
           if (multiBbox) {
             const pad = 10
@@ -795,10 +873,13 @@ export const Whiteboard: React.FC = () => {
           }
         }
         setHoveredHandle(foundHandle)
-        // Hover detection — find topmost stroke under cursor
+        // Hover detection — find topmost stroke/shape near cursor
+        const extraPadding = 8 / scaleRef.current
         const hit = foundHandle
           ? null
-          : [...actions].reverse().find((a) => a.id && pointInBBox(x, y, getBBox(a), 8))
+          : [...actionsRef.current]
+              .reverse()
+              .find((a) => a.id && pointNearAction(x, y, a, extraPadding))
         setHoveredId(hit?.id ?? null)
       }
       return
@@ -871,15 +952,16 @@ export const Whiteboard: React.FC = () => {
           maxY: marquee.y + marquee.h,
         }
         const hits = actions.filter((a) => bboxesIntersect(getBBox(a), marqueeBbox))
-        setSelectedIds(new Set(hits.map((a) => a.id!).filter(Boolean)))
+        setSelectedIdsAndRef(new Set(hits.map((a) => a.id!).filter(Boolean)))
       } else {
-        // Small drag = click, hit test top stroke
+        // Small drag = click, hit test top stroke near the click point
         const canvas = canvasRef.current
         if (canvas && marquee) {
+          const extraPadding = 8 / scaleRef.current
           const hit = [...actions]
             .reverse()
-            .find((a) => pointInBBox(marquee.x, marquee.y, getBBox(a)))
-          setSelectedIds(hit?.id ? new Set([hit.id]) : new Set())
+            .find((a) => pointNearAction(marquee.x, marquee.y, a, extraPadding))
+          setSelectedIdsAndRef(hit?.id ? new Set([hit.id]) : new Set())
         }
       }
       setMarquee(null)
@@ -903,7 +985,7 @@ export const Whiteboard: React.FC = () => {
 
     // Auto-select the newly drawn shape and switch to select tool
     if (action.type === 'shape' && action.id) {
-      setSelectedIds(new Set([action.id]))
+      setSelectedIdsAndRef(new Set([action.id]))
       setTool('select')
     }
   }
@@ -927,6 +1009,11 @@ export const Whiteboard: React.FC = () => {
       actionsRef.current = updater
       setActions(updater)
     }
+  }
+
+  const setSelectedIdsAndRef = (ids: Set<string>) => {
+    selectedIdsRef.current = ids
+    setSelectedIds(ids)
   }
 
   const undo = async () => {
@@ -982,7 +1069,7 @@ export const Whiteboard: React.FC = () => {
         const toDelete = actionsRef.current.filter((a) => a.id && selectedIds.has(a.id))
         const newActions = actionsRef.current.filter((a) => !a.id || !selectedIds.has(a.id))
         setActionsAndRef(newActions)
-        setSelectedIds(new Set())
+        setSelectedIdsAndRef(new Set())
         for (const stroke of toDelete) {
           myUndoStack.current.push(stroke)
           await supabase.from('strokes').delete().eq('data->>id', stroke.id).eq('room_id', roomId)
@@ -1237,7 +1324,7 @@ export const Whiteboard: React.FC = () => {
         if (stroke) {
           const newActions = actionsRef.current.filter((a) => !selectedIds.has(a.id!))
           setActionsAndRef(newActions)
-          setSelectedIds(new Set())
+          setSelectedIdsAndRef(new Set())
           myUndoStack.current.push(stroke)
           setCanUndo(true)
           supabase.from('strokes').delete().eq('data->>id', selectedIds).eq('room_id', roomId)
@@ -1295,7 +1382,9 @@ export const Whiteboard: React.FC = () => {
             ? hoveredHandle === 'nw' || hoveredHandle === 'se'
               ? 'nw-resize'
               : 'ne-resize'
-            : 'none',
+            : hoveredId && tool === 'select'
+              ? 'pointer'
+              : 'none',
         }}
         onMouseDown={(e) => {
           if (e.button === 2) handleCanvasPan(e, true)
@@ -1315,9 +1404,18 @@ export const Whiteboard: React.FC = () => {
           }
           if (isPanning) handleCanvasPan(e, false)
           else if (e.buttons === 1) draw(e)
+          else if (e.buttons === 0 && tool === 'select') draw(e)
         }}
         onMouseUp={isPanning ? stopPan : stopDrawing}
-        onMouseLeave={isPanning ? stopPan : stopDrawing}
+        onMouseLeave={
+          isPanning
+            ? stopPan
+            : () => {
+                stopDrawing()
+                setHoveredId(null)
+                setHoveredHandle(null)
+              }
+        }
         onTouchEnd={handleTouchEnd}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -1353,7 +1451,7 @@ export const Whiteboard: React.FC = () => {
       </svg>
 
       {/* Custom cursor — only on canvas, hidden when over any popup/footer */}
-      {!hideCursorWhileHudClick && !hoveredHandle && (
+      {!hideCursorWhileHudClick && !(hoveredId && tool === 'select' && !hoveredHandle) && (
         <div
           className="pointer-events-none fixed"
           style={{
